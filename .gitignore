@@ -1,0 +1,19 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+
+# 构建产物
+DailyReport.app/
+build/
+
+# 系统
+.DS_Store
+
+# 日志
+*.log
