@@ -68,10 +68,3 @@ Sources/DailyReport/
 scripts/build-app.sh        # 构建 + 打包
 Resources/Info.plist.template
 ```
-
-## 后续可做
-
-- App 图标资源（当前为系统图标占位）
-- 全局快捷键唤起
-- PDF 导出（`ImageRenderer`）
-- 周报统计图（Swift Charts 柱状 / 完成率趋势）
