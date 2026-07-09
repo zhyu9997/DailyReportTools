@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(AppState.Key.reminderEnabled) private var reminderEnabled = true
     @AppStorage(AppState.Key.reminderHour) private var reminderHour = AppState.defaultReminderHour
     @AppStorage(AppState.Key.reminderMinute) private var reminderMinute = AppState.defaultReminderMinute
+    @AppStorage(AppState.Key.appearance) private var appearanceRaw = AppearanceMode.system.rawValue
 
     @Environment(\.modelContext) private var context
     @State private var authorized = false
@@ -19,6 +20,12 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("通用") {
+                Picker("外观", selection: $appearanceRaw) {
+                    ForEach(AppearanceMode.allCases) { mode in
+                        Text(mode.localizedName).tag(mode.rawValue)
+                    }
+                }
+
                 Toggle("开机自启", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newVal in
                         do {

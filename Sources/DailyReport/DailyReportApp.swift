@@ -4,6 +4,11 @@ import SwiftData
 @main
 struct DailyReportApp: App {
     let container: ModelContainer
+    @AppStorage(AppState.Key.appearance) private var appearanceRaw = AppearanceMode.system.rawValue
+
+    private var colorScheme: ColorScheme? {
+        AppearanceMode(rawValue: appearanceRaw)?.colorScheme
+    }
 
     init() {
         do {
@@ -33,6 +38,7 @@ struct DailyReportApp: App {
     var body: some Scene {
         MenuBarExtra {
             MenuPanelView()
+                .preferredColorScheme(colorScheme)
         } label: {
             Image(systemName: "checklist")
         }
@@ -42,12 +48,14 @@ struct DailyReportApp: App {
         Window("DailyReport", id: AppState.mainWindowID) {
             MainTabView()
                 .frame(minWidth: 880, minHeight: 580)
+                .preferredColorScheme(colorScheme)
         }
         .modelContainer(container)
         .defaultSize(width: 1024, height: 720)
 
         Settings {
             SettingsView()
+                .preferredColorScheme(colorScheme)
         }
         .modelContainer(container)
     }

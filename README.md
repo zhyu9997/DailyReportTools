@@ -14,6 +14,8 @@
 - **周期性** — 会议与计划任务逾期原地推进；计划任务完成时克隆下一次（保留滚动计划）
 - **数据安全** — 设置页支持 JSON 全量导出 / 导入；导入前自动留快照；Schema 迁移失败 wipe 前自动备份到 `~/Library/Application Support/com.zhyu.dailyreport/backups/`
 - **每日提醒** — 可设时间的本地通知
+- **外观切换** — 跟随系统 / 浅色 / 深色，设置页一键切换（主窗口、菜单栏面板、设置窗统一）
+- **开机自启** — 设置页开关；基于 `SMAppService` 注册登录项，首次开启系统授权一次
 - **纯菜单栏运行** — `LSUIElement`，不占 Dock 位置
 
 > 导出当前仅保留**周报 XLSX**（按星期几组织）。时间线 / 概要的历史导出入口已移除。
@@ -44,16 +46,16 @@ rm -rf DailyReport.app
 
 1. 启动后菜单栏出现 ✅ checklist 图标，点击弹出今日面板。
 2. 在面板里快速添加完成 / 计划 / 问题，选标签、优先级、是否周期。
-3. 点「打开主窗口」查看概要、时间线、会议纪要、周报，或打开设置调整提醒 / 数据导入导出。
+3. 点「打开主窗口」查看概要、时间线、会议纪要、周报，或打开设置调整提醒 / 外观 / 开机自启 / 数据导入导出。
 4. 数据本地保存（SwiftData，`~/Library/Application Support/default.store`），重启不丢失。
 
 ## 技术栈
 
 - Swift 6 + SwiftUI（原生 macOS 14+）
 - SwiftData（`@Model` 本地持久化，轻量迁移）
-- Swift Charts（统计图表）
 - UserNotifications（每日提醒）
-- SwiftPM 构建 + 脚本打包成 `.app`
+- ServiceManagement（开机自启，`SMAppService`）
+- SwiftPM 构建 + 脚本打包成 `.app`（ad-hoc 签名）
 
 ## 目录结构
 
