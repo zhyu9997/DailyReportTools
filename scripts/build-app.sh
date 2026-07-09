@@ -29,6 +29,9 @@ mkdir -p "$APP/Contents/Resources"
 cp "$BIN_DIR/DailyReport" "$APP/Contents/MacOS/DailyReport"
 cp "Resources/Info.plist.template" "$APP/Contents/Info.plist"
 
+# Ad-hoc 签名（SMAppService 注册登录项需要 bundle 至少有签名）
+codesign --force --deep --sign - "$APP" 2>/dev/null || echo "⚠️  ad-hoc 签名失败，开机自启功能可能不可用"
+
 touch "$APP"
 
 RESULT="$(pwd)/$APP"

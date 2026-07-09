@@ -3,6 +3,7 @@ import SwiftData
 import AppKit
 import UserNotifications
 import UniformTypeIdentifiers
+import ServiceManagement
 
 struct SettingsView: View {
     @AppStorage(AppState.Key.reminderEnabled) private var reminderEnabled = true
@@ -13,9 +14,29 @@ struct SettingsView: View {
     @State private var authorized = false
     @State private var pendingRestore: Data?
     @State private var restoreError: String?
+    @State private var launchAtLogin = false
 
     var body: some View {
         Form {
+            Section("通用") {
+                Toggle("开机自启", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, newVal in
+                        do {
+                            if newVal {
+                                try SMAppService.mainApp.register()
+                            } else {
+                                try SMAppService.mainApp.unregister()
+                            }
+                        } catch {
+                            launchAtLogin = !newVal
+                            NSSound.beep()
+                        }
+                    }
+                Text("开启后，开机登录时自动启动 DailyReport。首次开启系统可能弹授权提示。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("每日提醒") {
                 Toggle("启用每日提醒", isOn: $reminderEnabled)
                     .onChange(of: reminderEnabled) { _, _ in reschedule() }
@@ -75,7 +96,10 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .padding(20)
         .frame(width: 460)
-        .task { authorized = await ReminderService.shared.currentAuthorization() }
+        .task {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            authorized = await ReminderService.shared.currentAuthorization()
+        }
         .alert("导入会清空当前数据", isPresented: Binding(
             get: { pendingRestore != nil },
             set: { if !$0 { pendingRestore = nil } }
