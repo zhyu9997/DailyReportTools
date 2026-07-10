@@ -275,9 +275,21 @@ struct MenuPanelView: View {
             ? (e.finishDate ?? e.timestamp).friendlyDate
             : e.timestamp.friendlyDate
         return HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(e.isOverdue ? .red : color)
-                .frame(width: 3)
+            if e.kind == .planned {
+                Button {
+                    RecurrenceService.markDone(e, in: context)
+                } label: {
+                    Image(systemName: e.isOverdue ? "exclamationmark.circle" : "circle")
+                        .foregroundStyle(e.isOverdue ? .red : .secondary)
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .help("标记完成")
+            } else {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(e.isOverdue ? .red : color)
+                    .frame(width: 3)
+            }
             Text(e.title)
                 .font(.caption)
                 .lineLimit(1)
