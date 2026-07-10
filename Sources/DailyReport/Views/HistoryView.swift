@@ -139,14 +139,12 @@ struct HistoryView: View {
 
     // MARK: 看板
     private var board: some View {
-        ScrollView {
-            HStack(alignment: .top, spacing: 12) {
-                ForEach(WorkKind.allCases) { kind in
-                    column(kind)
-                }
+        HStack(alignment: .top, spacing: 12) {
+            ForEach(WorkKind.allCases) { kind in
+                column(kind)
             }
-            .padding(12)
         }
+        .padding(12)
     }
 
     private func column(_ kind: WorkKind) -> some View {
@@ -169,33 +167,36 @@ struct HistoryView: View {
             .padding(.horizontal, 4)
             .padding(.top, 2)
 
-            // 卡片列表
-            VStack(spacing: 8) {
-                if items.isEmpty {
-                    Text(kind == .blocker ? "拖拽任务到这里" : "拖拽任务到这里，或新建会议")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 36)
-                } else if kind == .planned {
-                    plannedSections(items)
-                } else if kind == .blocker {
-                    statusSections(items)
-                } else {
-                    ForEach(items) { item in
-                        boardCard(item)
+            // 卡片列表（本列独立滚动）
+            ScrollView {
+                VStack(spacing: 8) {
+                    if items.isEmpty {
+                        Text(kind == .blocker ? "拖拽任务到这里" : "拖拽任务到这里，或新建会议")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 36)
+                    } else if kind == .planned {
+                        plannedSections(items)
+                    } else if kind == .blocker {
+                        statusSections(items)
+                    } else {
+                        ForEach(items) { item in
+                            boardCard(item)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity)
             }
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10)
             .fill(isTarget ? color.opacity(0.20) : color.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 10)
             .stroke(isTarget ? color.opacity(0.75) : color.opacity(0.22),
                     lineWidth: isTarget ? 2 : 1))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .dropDestination(for: String.self) { items, _ in
             guard let str = items.first, let id = UUID(uuidString: str),
                   let target = entries.first(where: { $0.id == id }) else { return false }
