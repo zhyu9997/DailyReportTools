@@ -239,7 +239,7 @@ struct MenuPanelView: View {
                         .padding(.horizontal, 2)
                         VStack(spacing: 3) {
                             ForEach(todayMeetings) { m in
-                                meetingRow(m)
+                                MeetingPanelRow(meeting: m)
                             }
                         }
                     }
@@ -390,35 +390,73 @@ struct MenuPanelView: View {
         newPriority = .medium
     }
 
-    private func meetingRow(_ m: Meeting) -> some View {
-        HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(Color.purple)
-                .frame(width: 3)
-            Image(systemName: m.isRecurring ? "arrow.triangle.2.circlepath" : "person.3.fill")
-                .foregroundStyle(.purple)
-                .font(.system(size: 9))
-            Text(m.topic)
-                .font(.caption)
-                .lineLimit(1)
-            if m.isRecurring {
-                Text(m.recurrenceLabel)
-                    .font(.system(size: 9).weight(.semibold))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(Color.purple.opacity(0.15))
-                    .foregroundStyle(.purple)
-                    .clipShape(Capsule())
+    private func kindColor(_ k: WorkKind, status: BlockerStatus = .ongoing) -> Color {
+        switch k { case .done: .green; case .planned: .blue; case .blocker: status.swiftUIColor }
+    }
+}
+
+/// 菜单栏面板的会议行：点击展开内联编辑概要
+private struct MeetingPanelRow: View {
+    @Bindable var meeting: Meeting
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(Color.purple)
+                        .frame(width: 3)
+                    Image(systemName: meeting.isRecurring ? "arrow.triangle.2.circlepath" : "person.3.fill")
+                        .foregroundStyle(.purple)
+                        .font(.system(size: 9))
+                    Text(meeting.topic)
+                        .font(.caption)
+                        .lineLimit(1)
+                    if meeting.isRecurring {
+                        Text(meeting.recurrenceLabel)
+                            .font(.system(size: 9).weight(.semibold))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.purple.opacity(0.15))
+                            .foregroundStyle(.purple)
+                            .clipShape(Capsule())
+                    }
+                    Spacer()
+                    Text(meeting.timestamp.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
             }
-            Spacer()
-            Text(m.timestamp.formatted(date: .omitted, time: .shortened))
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            .buttonStyle(.plain)
+
+            if expanded {
+                ZStack(alignment: .topLeading) {
+                    if meeting.summary.isEmpty {
+                        Text("点这里写会议概要…")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 5)
+                            .allowsHitTesting(false)
+                    }
+                    TextEditor(text: $meeting.summary)
+                        .font(.caption)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 28, alignment: .top)
+                        .padding(.horizontal, 2)
+                        .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2)))
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
         .padding(.vertical, 3).padding(.horizontal, 6)
         .background(RoundedRectangle(cornerRadius: 5).fill(Color.purple.opacity(0.05)))
-    }
-
-    private func kindColor(_ k: WorkKind, status: BlockerStatus = .ongoing) -> Color {
-        switch k { case .done: .green; case .planned: .blue; case .blocker: status.swiftUIColor }
     }
 }

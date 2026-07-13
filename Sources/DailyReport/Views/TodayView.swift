@@ -273,6 +273,7 @@ struct TodayView: View {
 
     @ViewBuilder
     private func todayMeetingRow(_ m: Meeting) -> some View {
+        @Bindable var m = m
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "person.3.fill")
@@ -291,10 +292,22 @@ struct TodayView: View {
                 Text(m.timestamp.formatted(date: .omitted, time: .shortened))
                     .font(.caption2).foregroundStyle(.tertiary)
             }
-            if !m.summary.isEmpty {
-                Text(m.summary)
-                    .font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(2)
+            ZStack(alignment: .topLeading) {
+                if m.summary.isEmpty {
+                    Text("点这里写会议概要…")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 5)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $m.summary)
+                    .font(.caption)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 28, alignment: .top)
+                    .padding(.horizontal, 2)
+                    .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
             }
             if !m.tags.isEmpty {
                 HStack(spacing: 3) {

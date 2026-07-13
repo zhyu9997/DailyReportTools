@@ -54,7 +54,7 @@ struct MeetingView: View {
 /// 单条会议卡片
 struct MeetingCard: View {
     @Environment(\.modelContext) private var context
-    let meeting: Meeting
+    @Bindable var meeting: Meeting
     var onEdit: () -> Void
 
     @State private var isAddingReview = false
@@ -82,12 +82,7 @@ struct MeetingCard: View {
                 Text(meeting.timestamp.relativeTime)
                     .font(.caption).foregroundStyle(.tertiary)
             }
-            if !meeting.summary.isEmpty {
-                Text(meeting.summary)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            summaryEditor
             if !meeting.tags.isEmpty {
                 HStack(spacing: 4) {
                     ForEach(meeting.tags) { tag in
@@ -193,6 +188,27 @@ struct MeetingCard: View {
         newReviewer = ""
         newOpinion = ""
         withAnimation(.easeInOut(duration: 0.18)) { isAddingReview = false }
+    }
+
+    /// 概要：随时内联编辑（点击即写，SwiftData autosave 持久化）
+    private var summaryEditor: some View {
+        ZStack(alignment: .topLeading) {
+            if meeting.summary.isEmpty {
+                Text("点这里写概要…")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .allowsHitTesting(false)
+            }
+            TextEditor(text: $meeting.summary)
+                .font(.subheadline)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 36, alignment: .top)
+                .padding(.horizontal, 4)
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+        }
     }
 
     @ViewBuilder
