@@ -58,7 +58,7 @@ struct WorkEntryCard: View {
             HStack(spacing: 8) {
                 Image(systemName: entry.kind.icon).foregroundStyle(kindColor)
                 Text(entry.title).font(.body.weight(.semibold))
-                if entry.kind == .planned {
+                if entry.kind == .planned || entry.kind == .blocker {
                     priorityBadge(entry.priority)
                 }
                 Spacer()

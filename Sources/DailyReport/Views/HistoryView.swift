@@ -45,7 +45,8 @@ struct HistoryView: View {
     @State private var newPriority: Priority = .medium
     @State private var collapsedPriorities: Set<Priority> = []
     @State private var dropTargetPriority: Priority?
-    @State private var collapsedStatuses: Set<BlockerStatus> = []
+    @State private var collapsedBlockerPriorities: Set<Priority> = []
+    @State private var dropTargetBlockerPriority: Priority?
     @State private var dropTargetStatus: BlockerStatus?
     @State private var searchText = ""
 
@@ -179,7 +180,7 @@ struct HistoryView: View {
                     } else if kind == .planned {
                         plannedSections(items)
                     } else if kind == .blocker {
-                        statusSections(items)
+                        blockerSections(items)
                     } else {
                         ForEach(items) { item in
                             boardCard(item)
@@ -293,43 +294,43 @@ struct HistoryView: View {
         }
     }
 
-    /// 问题列：按状态分组渲染，组头可折叠，整组可作拖放目标
+    /// 问题列：外层按优先级（高/中/低，可折叠），内层按状态（进行中/观察中/已关闭，不折叠）
     @ViewBuilder
-    private func statusSections(_ items: [BoardItem]) -> some View {
+    private func blockerSections(_ items: [BoardItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach([BlockerStatus.ongoing, .monitor, .closed]) { s in
-                let group = items.filter { statusOf($0) == s }
-                statusSection(s, items: group)
+            ForEach([Priority.high, .medium, .low]) { p in
+                let group = items.filter { priorityOf($0) == p }
+                blockerPrioritySection(p, items: group)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
-    private func statusSection(_ s: BlockerStatus, items: [BoardItem]) -> some View {
-        let collapsed = collapsedStatuses.contains(s)
-        let isTarget = dropTargetStatus == s
+    private func blockerPrioritySection(_ p: Priority, items: [BoardItem]) -> some View {
+        let collapsed = collapsedBlockerPriorities.contains(p)
+        let isTarget = dropTargetBlockerPriority == p
         VStack(alignment: .leading, spacing: 6) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    if collapsed { collapsedStatuses.remove(s) }
-                    else { collapsedStatuses.insert(s) }
+                    if collapsed { collapsedBlockerPriorities.remove(p) }
+                    else { collapsedBlockerPriorities.insert(p) }
                 }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
-                    Image(systemName: "circle.fill")
-                        .foregroundStyle(s.swiftUIColor)
+                    Image(systemName: "flag.fill")
+                        .foregroundStyle(p.swiftUIColor)
                         .font(.caption)
-                    Text(s.localizedName)
+                    Text("\(p.localizedName)优先级")
                         .font(.caption.weight(.semibold))
                     Text("\(items.count)")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(s.swiftUIColor)
+                        .foregroundStyle(p.swiftUIColor)
                         .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(s.swiftUIColor.opacity(0.15))
+                        .background(p.swiftUIColor.opacity(0.15))
                         .clipShape(Capsule())
                     Spacer()
                 }
@@ -340,15 +341,18 @@ struct HistoryView: View {
 
             if !collapsed {
                 if items.isEmpty {
-                    Text("拖任务到这里设为「\(s.localizedName)」")
+                    Text("拖任务到这里设为「\(p.localizedName)」优先级的问题")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                 } else {
-                    VStack(spacing: 8) {
-                        ForEach(items) { item in
-                            boardCard(item)
+                    VStack(spacing: 10) {
+                        ForEach([BlockerStatus.ongoing, .monitor, .closed]) { s in
+                            let subgroup = items.filter { statusOf($0) == s }
+                            if !subgroup.isEmpty {
+                                blockerStatusSubSection(s, priority: p, items: subgroup)
+                            }
                         }
                     }
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -357,14 +361,62 @@ struct HistoryView: View {
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 8)
-            .fill(isTarget ? s.swiftUIColor.opacity(0.18) : Color.clear))
+            .fill(isTarget ? p.swiftUIColor.opacity(0.18) : Color.clear))
         .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(isTarget ? s.swiftUIColor.opacity(0.7) : Color.clear, lineWidth: 2))
+            .stroke(isTarget ? p.swiftUIColor.opacity(0.7) : Color.clear, lineWidth: 2))
         .dropDestination(for: String.self) { dropped, _ in
             guard let str = dropped.first, let id = UUID(uuidString: str),
                   let target = entries.first(where: { $0.id == id }) else { return false }
-            // 拖到某状态组：归入问题列 + 设为该状态
+            // 拖到某优先级组：归入问题列 + 设为该优先级
             target.kind = .blocker
+            target.priority = p
+            return true
+        } isTargeted: { targeting in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                dropTargetBlockerPriority = (targeting == true) ? p : nil
+            }
+        }
+    }
+
+    /// 问题列内层：按状态子分组（不折叠，仅作 drop 目标，命中后同时设优先级+状态）
+    @ViewBuilder
+    private func blockerStatusSubSection(_ s: BlockerStatus, priority p: Priority, items: [BoardItem]) -> some View {
+        let isTarget = dropTargetStatus == s
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "circle.fill")
+                    .foregroundStyle(s.swiftUIColor)
+                    .font(.caption)
+                Text(s.localizedName)
+                    .font(.caption.weight(.semibold))
+                Text("\(items.count)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(s.swiftUIColor)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(s.swiftUIColor.opacity(0.15))
+                    .clipShape(Capsule())
+                Spacer()
+            }
+            .padding(.horizontal, 4)
+
+            VStack(spacing: 8) {
+                ForEach(items) { item in
+                    boardCard(item)
+                }
+            }
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 8)
+            .fill(isTarget ? s.swiftUIColor.opacity(0.18) : s.swiftUIColor.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(isTarget ? s.swiftUIColor.opacity(0.7) : s.swiftUIColor.opacity(0.15),
+                    lineWidth: isTarget ? 2 : 1))
+        .dropDestination(for: String.self) { dropped, _ in
+            guard let str = dropped.first, let id = UUID(uuidString: str),
+                  let target = entries.first(where: { $0.id == id }) else { return false }
+            // 拖到某状态子组：归入问题列 + 设优先级 + 设状态
+            target.kind = .blocker
+            target.priority = p
             target.blockerStatus = s
             return true
         } isTargeted: { targeting in
