@@ -190,24 +190,34 @@ struct MeetingCard: View {
         withAnimation(.easeInOut(duration: 0.18)) { isAddingReview = false }
     }
 
-    /// 概要：随时内联编辑（点击即写，SwiftData autosave 持久化）
+    /// 概要：未来会议可随时内联编辑；已完成（timestamp ≤ 现在）的会议只读，避免误改
+    @ViewBuilder
     private var summaryEditor: some View {
-        ZStack(alignment: .topLeading) {
-            if meeting.summary.isEmpty {
-                Text("点这里写概要…")
+        if meeting.timestamp <= Date() {
+            if !meeting.summary.isEmpty {
+                Text(meeting.summary)
                     .font(.subheadline)
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .allowsHitTesting(false)
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            TextEditor(text: $meeting.summary)
-                .font(.subheadline)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 36, alignment: .top)
-                .padding(.horizontal, 4)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+        } else {
+            ZStack(alignment: .topLeading) {
+                if meeting.summary.isEmpty {
+                    Text("点这里写概要…")
+                        .font(.subheadline)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 7)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $meeting.summary)
+                    .font(.subheadline)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 36, alignment: .top)
+                    .padding(.horizontal, 4)
+                    .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+            }
         }
     }
 
