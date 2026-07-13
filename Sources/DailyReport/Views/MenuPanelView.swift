@@ -382,6 +382,7 @@ struct MenuPanelView: View {
         newTitle = ""
         selectedTags = []
         newHelper = ""
+        newFinishDate = Date()
         isRecurring = false
         recurrenceWeekdays = []
         recurrenceMonthDays = []

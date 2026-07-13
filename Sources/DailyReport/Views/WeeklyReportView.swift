@@ -78,6 +78,9 @@ struct WeeklyReportView: View {
                     }
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+                weekAnchor = Date()
+            }
         }
     }
 

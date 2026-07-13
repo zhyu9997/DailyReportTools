@@ -506,6 +506,7 @@ struct HistoryView: View {
         newTitle = ""
         selectedTags = []
         newHelper = ""
+        newFinishDate = Date()
         isRecurring = false
         recurrenceWeekdays = []
         recurrenceMonthDays = []
