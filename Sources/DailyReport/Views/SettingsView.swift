@@ -82,6 +82,11 @@ struct SettingsView: View {
             }
 
             Section("数据") {
+                Button("立即备份") { manualBackup() }
+                Text("写入自动备份目录（每次启动也会自动备份一次）。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Divider()
                 Button("导出全部为 JSON…") { exportJSON() }
                 Button("从 JSON 导入…", role: .destructive) { importJSON() }
                 Divider()
@@ -181,5 +186,14 @@ struct SettingsView: View {
 
     private func openBackupFolder() {
         NSWorkspace.shared.activateFileViewerSelecting([BackupService.backupDirectory])
+    }
+
+    private func manualBackup() {
+        if let url = BackupService.manualBackup(in: context) {
+            NSSound.beep()
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSSound.beep()
+        }
     }
 }

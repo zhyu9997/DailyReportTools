@@ -221,18 +221,38 @@ enum BackupService {
         writeBackup(snapshot: snapshot(in: context), prefix: "auto")
     }
 
+    /// 每次启动自动备份（prefix: boot，保留最近 10 个）——即使 store 被其他 app 冲掉也有最新快照
+    @discardableResult
+    static func bootBackup(in context: ModelContext) -> URL? {
+        writeBackup(snapshot: snapshot(in: context), prefix: "boot")
+    }
+
+    /// 用户主动备份（prefix: manual，保留最近 10 个）
+    @discardableResult
+    static func manualBackup(in context: ModelContext) -> URL? {
+        writeBackup(snapshot: snapshot(in: context), prefix: "manual")
+    }
+
     /// 把快照写到 backups/<prefix>-<ISO>.json，并按 prefix 仅保留最近 10 个
     @discardableResult
     static func writeBackup(snapshot: Snapshot, prefix: String) -> URL? {
-        guard let data = try? encode(snapshot) else { return nil }
+        let data: Data
+        do {
+            data = try encode(snapshot)
+        } catch {
+            AppLogger.error("备份 encode 失败（prefix=\(prefix)）：\(error)")
+            return nil
+        }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         let url = backupDirectory.appendingPathComponent("\(prefix)-\(formatter.string(from: Date())).json")
         do {
             try data.write(to: url, options: .atomic)
             pruneOldBackups(prefix: prefix)
+            AppLogger.info("已写入备份：\(url.lastPathComponent)（\(data.count) bytes）")
             return url
         } catch {
+            AppLogger.error("备份写入失败（prefix=\(prefix), path=\(url.path)）：\(error)")
             return nil
         }
     }
