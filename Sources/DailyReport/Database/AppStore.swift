@@ -1,0 +1,469 @@
+import Foundation
+import GRDB
+import SwiftUI
+
+/// SwiftUI 数据入口：持有 DatabaseQueue，对外暴露只读快照 + 集中写入口
+/// 每次 mutation 立即同步写入（dbQueue.write）→ reloadAll 触发 @Observable → UI 自动刷新
+@Observable
+@MainActor
+final class AppStore {
+
+    private let dbQueue: DatabaseQueue
+
+    // MARK: - 只读快照（@Observable 监视）
+    private(set) var tags: [TagRecord] = []
+    private(set) var reports: [DailyReportRecord] = []
+    private(set) var todos: [TodoItemRecord] = []
+    private(set) var entries: [WorkEntryRecord] = []
+    private(set) var meetings: [MeetingRecord] = []
+    private(set) var reviews: [ReviewRecord] = []
+
+    // 关系映射
+    private(set) var tagsByReport: [UUID: [TagRecord]] = [:]
+    private(set) var tagsByTodo: [UUID: [TagRecord]] = [:]
+    private(set) var tagsByEntry: [UUID: [TagRecord]] = [:]
+    private(set) var tagsByMeeting: [UUID: [TagRecord]] = [:]
+    private(set) var reviewsByMeeting: [UUID: [ReviewRecord]] = [:]
+
+    init(dbQueue: DatabaseQueue) {
+        self.dbQueue = dbQueue
+        reloadAll()
+    }
+
+    // MARK: - 读取
+
+    func reloadAll() {
+        do {
+            try dbQueue.read { db in
+                tags = try TagRecord.order(Column("createdAt").asc).fetchAll(db)
+                reports = try DailyReportRecord.order(Column("date").desc).fetchAll(db)
+                todos = try TodoItemRecord.order(Column("createdAt").desc).fetchAll(db)
+                entries = try WorkEntryRecord.order(Column("timestamp").desc).fetchAll(db)
+                meetings = try MeetingRecord.order(Column("timestamp").desc).fetchAll(db)
+                reviews = try ReviewRecord.fetchAll(db)
+
+                // 4 张中间表共用一份 allTagsById 字典，避免 fetchTagMap 内部 4 次全表 Tag 扫描
+                let allTagsById = Dictionary(tags.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                tagsByReport  = try RecordQueries.fetchTagMap(db, linkTable: "tag_daily_report", ownerColumn: "reportId", allTagsById: allTagsById)
+                tagsByTodo    = try RecordQueries.fetchTagMap(db, linkTable: "tag_todo",          ownerColumn: "todoId",        allTagsById: allTagsById)
+                tagsByEntry   = try RecordQueries.fetchTagMap(db, linkTable: "tag_work_entry",    ownerColumn: "entryId",       allTagsById: allTagsById)
+                tagsByMeeting = try RecordQueries.fetchTagMap(db, linkTable: "tag_meeting",       ownerColumn: "meetingId",     allTagsById: allTagsById)
+                reviewsByMeeting = try RecordQueries.fetchReviewsByMeeting(db)
+            }
+        } catch {
+            AppLogger.error("AppStore.reloadAll 失败：\(error)")
+        }
+    }
+
+    // MARK: - 写入口
+
+    /// 所有写操作的核心通道：dbQueue.write 同步事务 → reloadAll 触发 UI 刷新
+    /// 失败时抛错（GRDB 会回滚事务，数据保持一致），由调用方决定是否吞
+    private func writeOrThrow(_ block: (Database) throws -> Void) throws {
+        try dbQueue.write { db in try block(db) }
+        reloadAll()
+    }
+
+    /// 暴露给 BackupService.restore / 批量重建：在单个事务里跑任意写 + 返回结果
+    /// 失败时整体回滚
+    @discardableResult
+    func transactional<T>(_ block: (Database) throws -> T) throws -> T {
+        let result = try dbQueue.write { db in try block(db) }
+        reloadAll()
+        return result
+    }
+
+    /// 给容错链路用：read-only 访问底层 dbQueue
+    func read<T>(_ block: (Database) throws -> T) throws -> T {
+        try dbQueue.read { try block($0) }
+    }
+
+    /// view 层便捷入口：吞掉 throws 并打 warn 日志，避免每个调用点写 try? 或 do/catch
+    /// 失败时 UI 不会刷新（数据未变），用户可重试；适合用于「点按钮 / 拖拽 / 删除」等单向操作
+    /// 需要拿到返回值或精确错误处理的场景仍用 throws API
+    ///
+    /// ⚠️ deprecated（R19）：吞 throws 会让用户操作静默失败。新代码请用 view 内 `write { try ... }`
+    /// helper 包装 + writeError alert 模式（参考 WorkEntryCard/MeetingCard/TagPicker）。
+    /// 本方法仅保留给历史调用点过渡，最终目标全仓清零
+    @available(*, deprecated, message: "用 view 内 write helper + writeError alert 暴露失败，避免 UI 假成功")
+    func run(_ block: (AppStore) throws -> Void) {
+        do { try block(self) } catch {
+            AppLogger.warn("AppStore 操作失败：\(error)")
+        }
+    }
+
+    // MARK: - Tag
+
+    func insertTag(_ draft: NewTag) throws -> TagRecord {
+        var rec = TagRecord(id: draft.id, name: draft.name, colorHex: draft.colorHex, createdAt: draft.createdAt)
+        try writeOrThrow { db in
+            try rec.insert(db)
+        }
+        return rec
+    }
+
+    func updateTag(_ id: UUID, name: String? = nil, colorHex: String? = nil) throws {
+        try writeOrThrow { db in
+            guard var rec = try TagRecord.fetchOne(db, key: id.uuidString) else { return }
+            if let n = name { rec.name = n }
+            if let c = colorHex { rec.colorHex = c }
+            try rec.update(db)
+        }
+    }
+
+    func deleteTag(_ id: UUID) throws {
+        try writeOrThrow { db in
+            try TagRecord.deleteOne(db, key: id.uuidString)
+        }
+    }
+
+    // MARK: - DailyReport
+
+    /// 取得或创建某天的日报（仅备注 / 标签）
+    /// check + insert 必须在单个事务里：原来 fetchOne→内存判断→insert 的两步流程在多窗口/并发下
+    /// 会产生 TOCTOU 竞态（两个调用方都拿到「不存在」就各自 insert 一条）。配合 v2 的 UNIQUE 索引兜底
+    @discardableResult
+    func getOrCreateReport(for date: Date) throws -> DailyReportRecord {
+        let day = Calendar.current.startOfDay(for: date)
+        // 快速路径：内存命中（绝大多数情况），避免开事务
+        if let existing = reports.first(where: { Calendar.current.isDate($0.date, inSameDayAs: day) }) {
+            return existing
+        }
+        // 慢路径：事务内 fetchOne→insert，保证唯一
+        var rec = DailyReportRecord(
+            id: UUID(),
+            date: day,
+            note: "",
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        try writeOrThrow { db in
+            if let existing = try DailyReportRecord.fetchOne(
+                db,
+                sql: "SELECT * FROM daily_report WHERE date = ? LIMIT 1",
+                arguments: [day]) {
+                rec = existing
+                return
+            }
+            try rec.insert(db)
+        }
+        return rec
+    }
+
+    func updateReport(_ id: UUID, mutations: (inout DailyReportRecord) -> Void) throws {
+        try writeOrThrow { db in
+            guard var rec = try DailyReportRecord.fetchOne(db, key: id.uuidString) else { return }
+            mutations(&rec)
+            rec.updatedAt = Date()
+            try rec.update(db)
+        }
+    }
+
+    func setReportTags(_ reportId: UUID, tagIds: [UUID]) throws {
+        try writeOrThrow { db in
+            try db.execute(sql: "DELETE FROM tag_daily_report WHERE reportId = ?",
+                           arguments: [reportId.uuidString])
+            for tid in tagIds {
+                try db.execute(sql: "INSERT INTO tag_daily_report (tagId, reportId) VALUES (?, ?)",
+                               arguments: [tid.uuidString, reportId.uuidString])
+            }
+        }
+    }
+
+    // MARK: - TodoItem
+
+    func insertTodo(_ draft: NewTodo) throws -> TodoItemRecord {
+        var rec = TodoItemRecord(
+            id: draft.id,
+            title: draft.title,
+            notes: draft.notes,
+            isDone: false,
+            dueDate: draft.dueDate,
+            createdAt: draft.createdAt,
+            completedAt: nil
+        )
+        try writeOrThrow { db in
+            try rec.insert(db)
+            for tid in draft.tagIds {
+                try db.execute(sql: "INSERT INTO tag_todo (tagId, todoId) VALUES (?, ?)",
+                               arguments: [tid.uuidString, rec.id.uuidString])
+            }
+        }
+        return rec
+    }
+
+    func updateTodo(_ id: UUID, mutations: (inout TodoItemRecord) -> Void) throws {
+        try writeOrThrow { db in
+            guard var rec = try TodoItemRecord.fetchOne(db, key: id.uuidString) else { return }
+            mutations(&rec)
+            try rec.update(db)
+        }
+    }
+
+    func toggleTodoDone(_ id: UUID) throws {
+        try updateTodo(id) { rec in
+            rec.isDone.toggle()
+            rec.completedAt = rec.isDone ? Date() : nil
+        }
+    }
+
+    func deleteTodo(_ id: UUID) throws {
+        try writeOrThrow { db in
+            try TodoItemRecord.deleteOne(db, key: id.uuidString)
+        }
+    }
+
+    /// 批量删除：单事务原子提交，任一失败整体回滚（避免逐条独立事务导致部分删除 + run 吞 throws 用户无感）
+    func deleteTodos(_ ids: [UUID]) throws {
+        guard !ids.isEmpty else { return }
+        try writeOrThrow { db in
+            for id in ids {
+                try TodoItemRecord.deleteOne(db, key: id.uuidString)
+            }
+        }
+    }
+
+    func setTodoTags(_ todoId: UUID, tagIds: [UUID]) throws {
+        try writeOrThrow { db in
+            try db.execute(sql: "DELETE FROM tag_todo WHERE todoId = ?",
+                           arguments: [todoId.uuidString])
+            for tid in tagIds {
+                try db.execute(sql: "INSERT INTO tag_todo (tagId, todoId) VALUES (?, ?)",
+                               arguments: [tid.uuidString, todoId.uuidString])
+            }
+        }
+    }
+
+    // MARK: - WorkEntry
+
+    func insertEntry(_ draft: NewWorkEntry) throws -> WorkEntryRecord {
+        var rec = draft.toRecord()
+        try writeOrThrow { db in
+            try rec.insert(db)
+            for tid in draft.tagIds {
+                try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
+                               arguments: [tid.uuidString, rec.id.uuidString])
+            }
+        }
+        return rec
+    }
+
+    func updateEntry(_ id: UUID,
+                     mutations: (inout WorkEntryRecord) -> Void,
+                     newTagIds: [UUID]? = nil) throws {
+        try writeOrThrow { db in
+            guard var rec = try WorkEntryRecord.fetchOne(db, key: id.uuidString) else { return }
+            mutations(&rec)
+            try rec.update(db)
+            if let ids = newTagIds {
+                try db.execute(sql: "DELETE FROM tag_work_entry WHERE entryId = ?",
+                               arguments: [id.uuidString])
+                for tid in ids {
+                    try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
+                                   arguments: [tid.uuidString, id.uuidString])
+                }
+            }
+        }
+    }
+
+    func setEntryTags(_ entryId: UUID, tagIds: [UUID]) throws {
+        try writeOrThrow { db in
+            try db.execute(sql: "DELETE FROM tag_work_entry WHERE entryId = ?",
+                           arguments: [entryId.uuidString])
+            for tid in tagIds {
+                try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
+                               arguments: [tid.uuidString, entryId.uuidString])
+            }
+        }
+    }
+
+    func deleteEntry(_ id: UUID) throws {
+        try writeOrThrow { db in
+            try WorkEntryRecord.deleteOne(db, key: id.uuidString)
+        }
+    }
+
+    /// 批量删除：单事务原子提交（同 deleteTodos 的理由）
+    func deleteEntries(_ ids: [UUID]) throws {
+        guard !ids.isEmpty else { return }
+        try writeOrThrow { db in
+            for id in ids {
+                try WorkEntryRecord.deleteOne(db, key: id.uuidString)
+            }
+        }
+    }
+
+    /// 周期性计划任务「标记完成」：克隆下一次 + 原地降级为 done
+    /// 等价于原 WorkEntry.spawnNextRecurrence + RecurrenceService.markDone
+    /// 已是 .done 的任务直接返回 nil（避免无意义写入；planned 与 blocker 仍允许 → done 转换）
+    @discardableResult
+    func markEntryDone(_ id: UUID) throws -> WorkEntryRecord? {
+        guard let original = entries.first(where: { $0.id == id }) else { return nil }
+        guard original.kind != .done else { return nil }
+        var spawned: WorkEntryRecord?
+
+        try writeOrThrow { db in
+            // 事务内重新 fetchOne 拿 fresh 值：多窗口同时打开时，
+            // 另一处 sweepWorkEntries 可能刚推进了 finishDate，内存 original 已过期，
+            // 用旧值算 nextRecurrenceDate 会跳过本该轮到的那一期
+            guard var current = try WorkEntryRecord.fetchOne(db, key: id.uuidString) else { return }
+            // 再防御一次：另一窗口已把它改成 .done（race），本次调用应为 no-op
+            guard current.kindRaw != WorkKind.done.rawValue else { return }
+            let wasPlanned = (current.kindRaw == WorkKind.planned.rawValue)
+            if current.isRecurring && wasPlanned {
+                var next = WorkEntryRecord(
+                    id: UUID(),
+                    title: current.title,
+                    detail: current.detail,
+                    timestamp: Date(),
+                    kindRaw: WorkKind.planned.rawValue,
+                    finishDate: current.nextRecurrenceDate(),
+                    helper: nil,
+                    blockerStatusRaw: BlockerStatus.ongoing.rawValue,
+                    priorityRaw: current.priorityRaw,
+                    isRecurring: true,
+                    recurrenceUnitRaw: current.recurrenceUnitRaw,
+                    recurrenceInterval: current.recurrenceInterval,
+                    recurrenceWeekdays: current.recurrenceWeekdays,
+                    recurrenceMonthDays: current.recurrenceMonthDays,
+                    createdAt: Date()
+                )
+                try next.insert(db)
+                // 复制 tag 关系
+                let tagIds = try UUID.fetchAll(
+                    db,
+                    sql: "SELECT tagId FROM tag_work_entry WHERE entryId = ?",
+                    arguments: [current.id.uuidString])
+                for tid in tagIds {
+                    try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
+                                   arguments: [tid.uuidString, next.id.uuidString])
+                }
+                spawned = next
+            }
+
+            // 原地降级为 done
+            current.kindRaw = WorkKind.done.rawValue
+            // planned / blocker 转 done 时统一用「现在」作为完成时间：
+            // - planned：finishDate 原本就是「计划完成日」，转 done 应覆盖为实际完成日
+            // - blocker：finishDate 可能是用户填的「问题截止日」，转 done 后语义变为「完成日」，必须覆盖
+            //   （否则导出 XLSX / 时间线分组会用过去的截止日当完成归属日，错位）
+            // - 已无 finishDate 的 done：兜底填上
+            current.finishDate = Date()
+            try current.update(db)
+        }
+        return spawned
+    }
+
+    // MARK: - Meeting
+
+    func insertMeeting(_ draft: NewMeeting) throws -> MeetingRecord {
+        var rec = draft.toRecord()
+        try writeOrThrow { db in
+            try rec.insert(db)
+            for tid in draft.tagIds {
+                try db.execute(sql: "INSERT INTO tag_meeting (tagId, meetingId) VALUES (?, ?)",
+                               arguments: [tid.uuidString, rec.id.uuidString])
+            }
+            for r in draft.reviews {
+                var review = ReviewRecord(
+                    id: r.id,
+                    reviewer: r.reviewer,
+                    opinion: r.opinion,
+                    order: r.order,
+                    createdAt: r.createdAt,
+                    meetingId: rec.id
+                )
+                try review.insert(db)
+            }
+        }
+        return rec
+    }
+
+    func updateMeeting(_ id: UUID, mutations: (inout MeetingRecord) -> Void) throws {
+        try writeOrThrow { db in
+            guard var rec = try MeetingRecord.fetchOne(db, key: id.uuidString) else { return }
+            mutations(&rec)
+            try rec.update(db)
+        }
+    }
+
+    func setMeetingTags(_ meetingId: UUID, tagIds: [UUID]) throws {
+        try writeOrThrow { db in
+            try db.execute(sql: "DELETE FROM tag_meeting WHERE meetingId = ?",
+                           arguments: [meetingId.uuidString])
+            for tid in tagIds {
+                try db.execute(sql: "INSERT INTO tag_meeting (tagId, meetingId) VALUES (?, ?)",
+                               arguments: [tid.uuidString, meetingId.uuidString])
+            }
+        }
+    }
+
+    func deleteMeeting(_ id: UUID) throws {
+        try writeOrThrow { db in
+            // Review 通过 ON DELETE CASCADE 自动删
+            try MeetingRecord.deleteOne(db, key: id.uuidString)
+        }
+    }
+
+    // MARK: - Review
+
+    @discardableResult
+    func addReview(to meetingId: UUID, reviewer: String, opinion: String = "", order: Int? = nil) throws -> ReviewRecord {
+        var rec = ReviewRecord(
+            id: UUID(),
+            reviewer: reviewer,
+            opinion: opinion,
+            order: order ?? (reviewsByMeeting[meetingId]?.count ?? 0),
+            createdAt: Date(),
+            meetingId: meetingId
+        )
+        try writeOrThrow { db in
+            try rec.insert(db)
+        }
+        return rec
+    }
+
+    /// 全量替换某会议的评审（MeetingFormView.save 用：先 delete 后 insert）
+    func setMeetingReviews(meetingId: UUID, with drafts: [NewReview]) throws {
+        try writeOrThrow { db in
+            try db.execute(sql: "DELETE FROM review WHERE meetingId = ?",
+                           arguments: [meetingId.uuidString])
+            for (idx, d) in drafts.enumerated() {
+                var review = ReviewRecord(
+                    id: d.id,
+                    reviewer: d.reviewer,
+                    opinion: d.opinion,
+                    order: idx,
+                    createdAt: d.createdAt,
+                    meetingId: meetingId
+                )
+                try review.insert(db)
+            }
+        }
+    }
+
+    /// VACUUM：把 DELETE 后空闲的页还给文件系统，避免多次 restore 后 db.sqlite 持续膨胀
+    /// SQLite 限制：VACUUM 不能在事务里跑，故用 writeWithoutTransaction
+    func vacuum() throws {
+        try dbQueue.writeWithoutTransaction { db in
+            try db.execute(sql: "VACUUM")
+        }
+    }
+
+    // MARK: - BackupService 用：清空全部表
+
+    /// 在已有事务里清空全部表（供 BackupService.restore 在单事务里 truncate+重建）
+    static func truncateAll(in db: Database) throws {
+        // 顺序：先子（关系/Review）后父
+        try db.execute(sql: "DELETE FROM tag_daily_report")
+        try db.execute(sql: "DELETE FROM tag_todo")
+        try db.execute(sql: "DELETE FROM tag_work_entry")
+        try db.execute(sql: "DELETE FROM tag_meeting")
+        try db.execute(sql: "DELETE FROM review")
+        try db.execute(sql: "DELETE FROM work_entry")
+        try db.execute(sql: "DELETE FROM todo_item")
+        try db.execute(sql: "DELETE FROM daily_report")
+        try db.execute(sql: "DELETE FROM meeting")
+        try db.execute(sql: "DELETE FROM tag")
+    }
+}

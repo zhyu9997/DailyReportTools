@@ -23,8 +23,15 @@ enum Recurrence {
         let m = comps.minute ?? 0
         switch unit {
         case .daily:
+            // base 在未来或当下：直接返回
+            // base 在过去：先一次性跳过整段（避免逐日累加；长期未开 app 时 N 可达数百~数千）
             let n = max(1, interval)
-            var d = base
+            if base > now { return base }
+            let elapsed = now.timeIntervalSince(base)
+            let stepSeconds = TimeInterval(n) * 86_400
+            let jumps = Int(elapsed / stepSeconds)   // 已完整过去的步数
+            var d = cal.date(byAdding: .day, value: jumps * n, to: base) ?? base
+            // 末尾小步微调：通常 ≤ 1 次
             while d <= now {
                 d = cal.date(byAdding: .day, value: n, to: d) ?? d
             }
@@ -32,31 +39,73 @@ enum Recurrence {
         case .weekly:
             let days = weekdays
             guard !days.isEmpty else { return nil }
-            var d = cal.startOfDay(for: now)
-            let cap = now.addingTimeInterval(366 * 86400)
-            while d <= cap {
-                let wd = cal.component(.weekday, from: d)
-                if days.contains(wd),
-                   let candidate = cal.date(bySettingHour: h, minute: m, second: 0, of: d),
-                   candidate > now {
-                    return candidate
+            let n = max(1, interval)
+            let stepDays = 7 * n
+            // 锚点用 base 而非 now：interval>1 时需要固定的窗口起点（每 n 周一个）
+            let anchor = cal.startOfDay(for: base)
+            let cap = max(now, base).addingTimeInterval(366 * 86_400)
+            // O(1) 跳到当前窗口起点；base 在未来则从 anchor 起算
+            var windowStart: Date
+            if base >= now {
+                windowStart = anchor
+            } else {
+                let elapsed = now.timeIntervalSince(anchor)
+                let stepSec = TimeInterval(stepDays) * 86_400
+                let jumps = Int(elapsed / stepSec)
+                windowStart = cal.date(byAdding: .day, value: jumps * stepDays, to: anchor) ?? anchor
+            }
+            var iterations = 0
+            while windowStart <= cap && iterations < 60 {
+                // 当前窗口（连续 7 天）内查 weekday 匹配
+                for offset in 0..<7 {
+                    guard let d = cal.date(byAdding: .day, value: offset, to: windowStart) else { continue }
+                    let wd = cal.component(.weekday, from: d)
+                    if days.contains(wd),
+                       let candidate = cal.date(bySettingHour: h, minute: m, second: 0, of: d),
+                       candidate > now {
+                        return candidate
+                    }
                 }
-                d = cal.date(byAdding: .day, value: 1, to: d) ?? d
+                windowStart = cal.date(byAdding: .day, value: stepDays, to: windowStart) ?? windowStart
+                iterations += 1
             }
             return nil
         case .monthly:
             let days = monthDays
             guard !days.isEmpty else { return nil }
-            var d = cal.startOfDay(for: now)
-            let cap = now.addingTimeInterval(366 * 86400)
-            while d <= cap {
-                let day = cal.component(.day, from: d)
-                if days.contains(day),
-                   let candidate = cal.date(bySettingHour: h, minute: m, second: 0, of: d),
-                   candidate > now {
+            let n = max(1, interval)
+            // 锚点：base 当月 1 日；按 n 个月为窗口跳
+            let baseComps = cal.dateComponents([.year, .month], from: base)
+            let anchorMonthStart = cal.date(from: baseComps) ?? cal.startOfDay(for: base)
+            let nowComps = cal.dateComponents([.year, .month], from: now)
+            // dateComponents 对极端日期可能返回 nil（与 daily/weekly 分支用 ?? 兜底保持一致）
+            guard let baseYear = baseComps.year, let baseMonth = baseComps.month,
+                  let nowYear = nowComps.year, let nowMonth = nowComps.month else {
+                return nil
+            }
+            let monthDiff = (nowYear - baseYear) * 12 + (nowMonth - baseMonth)
+            // O(1) 跳到当前或前一个允许的月份
+            let jumps = max(0, monthDiff) / n
+            var monthCursor = cal.date(byAdding: .month, value: jumps * n, to: anchorMonthStart) ?? anchorMonthStart
+            let cap = max(now, base).addingTimeInterval(366 * 86_400)
+            var iterations = 0
+            while monthCursor <= cap && iterations < 60 {
+                let mc = cal.dateComponents([.year, .month], from: monthCursor)
+                for day in days.sorted() {
+                    var c = mc
+                    c.day = day
+                    // cal.date(from:) 对无效日期（如 2/31）会「component overflow」到次月（3/3）
+                    // 而非返回 nil。校验 day 一致以跳过这种「目标日不存在」的月份
+                    guard let d = cal.date(from: c),
+                          cal.component(.day, from: d) == day,
+                          let candidate = cal.date(bySettingHour: h, minute: m, second: 0, of: d),
+                          candidate > now else {
+                        continue
+                    }
                     return candidate
                 }
-                d = cal.date(byAdding: .day, value: 1, to: d) ?? d
+                monthCursor = cal.date(byAdding: .month, value: n, to: monthCursor) ?? monthCursor
+                iterations += 1
             }
             return nil
         }
@@ -72,12 +121,16 @@ enum Recurrence {
             let n = max(1, interval)
             return n == 1 ? "每天" : "每\(n)天"
         case .weekly:
-            guard !weekdays.isEmpty else { return "每周" }
+            let n = max(1, interval)
+            let prefix = n == 1 ? "每周" : "每\(n)周"
+            guard !weekdays.isEmpty else { return prefix }
             let parts = weekdayDisplayOrder.filter { weekdays.contains($0) }.map { weekdaySymbol($0) }
-            return "每周" + parts.joined()
+            return prefix + parts.joined()
         case .monthly:
-            guard !monthDays.isEmpty else { return "每月" }
-            return "每月" + monthDays.sorted().map { "\($0)日" }.joined(separator: "、")
+            let n = max(1, interval)
+            let prefix = n == 1 ? "每月" : "每\(n)月"
+            guard !monthDays.isEmpty else { return prefix }
+            return prefix + monthDays.sorted().map { "\($0)日" }.joined(separator: "、")
         }
     }
 }

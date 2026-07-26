@@ -1,19 +1,32 @@
 import SwiftUI
-import SwiftData
 
 struct TagPicker: View {
-    @Binding var selected: [Tag]
+    @Binding var selected: [TagRecord]
     var allowCreate: Bool = true
     var compact: Bool = false
-    @Environment(\.modelContext) private var context
-    @Query(sort: \Tag.name) private var allTags: [Tag]
+    @Environment(\.appStore) private var store
 
     @State private var showNewForm = false
     @State private var showCompactPopover = false
     @State private var newName = ""
     @State private var newColorHex = "#4A90D9"
     @FocusState private var nameFocused: Bool
-    @State private var pendingDeleteTag: Tag?
+    @State private var pendingDeleteTag: TagRecord?
+    /// 写失败反馈：删标签是破坏性操作，store?.run 吞 throws 后 UI 会假成功 + selected 被错误地同步移除
+    @State private var writeError: String?
+
+    private var allTags: [TagRecord] {
+        (store?.tags ?? []).sorted { $0.name < $1.name }
+    }
+
+    /// 统一写入口：失败时弹 alert 反馈给用户（与 WorkEntryCard/HistoryView 同模式）
+    /// 返回 true 表示写成功，调用方据此决定是否同步本地状态（如 selected）
+    @discardableResult
+    private func write(_ block: (AppStore) throws -> Void) -> Bool {
+        guard let store else { return false }
+        do { try block(store); return true }
+        catch { writeError = error.localizedDescription; return false }
+    }
 
     var body: some View {
         Group {
@@ -29,14 +42,25 @@ struct TagPicker: View {
         )) {
             Button("删除", role: .destructive) {
                 if let tag = pendingDeleteTag {
-                    context.delete(tag)
-                    selected.removeAll { $0.id == tag.id }
+                    // 写成功后才同步本地 selected，避免「DB 没删 + UI 已移除」的不一致
+                    let deleted = write({ try $0.deleteTag(tag.id) })
+                    if deleted {
+                        selected.removeAll { $0.id == tag.id }
+                    }
                 }
                 pendingDeleteTag = nil
             }
             Button("取消", role: .cancel) { pendingDeleteTag = nil }
         } message: {
             Text(pendingDeleteTag.map { "标签「\($0.name)」会从所有任务/会议/日报移除。" } ?? "")
+        }
+        .alert("写入失败", isPresented: Binding(
+            get: { writeError != nil },
+            set: { if !$0 { writeError = nil } }
+        )) {
+            Button("好", role: .cancel) { writeError = nil }
+        } message: {
+            Text(writeError ?? "")
         }
     }
 
@@ -130,7 +154,7 @@ struct TagPicker: View {
         .onAppear { newColorHex = nextDefaultColor() }
     }
 
-    private func checkChip(_ tag: Tag) -> some View {
+    private func checkChip(_ tag: TagRecord) -> some View {
         let isSelected = selected.contains { $0.id == tag.id }
         return Button {
             toggle(tag)
@@ -156,10 +180,14 @@ struct TagPicker: View {
                 pendingDeleteTag = tag
             }
         }
+        .accessibilityLabel("标签 \(tag.name)")
+        .accessibilityValue(isSelected ? "已选中" : "未选中")
+        .accessibilityHint("双击切换选中状态")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     // MARK: - chip（完整版）
-    private func chip(_ tag: Tag) -> some View {
+    private func chip(_ tag: TagRecord) -> some View {
         let isSelected = selected.contains { $0.id == tag.id }
         return Button {
             toggle(tag)
@@ -178,9 +206,13 @@ struct TagPicker: View {
                 pendingDeleteTag = tag
             }
         }
+        .accessibilityLabel("标签 \(tag.name)")
+        .accessibilityValue(isSelected ? "已选中" : "未选中")
+        .accessibilityHint("双击切换选中状态")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func toggle(_ tag: Tag) {
+    private func toggle(_ tag: TagRecord) {
         if selected.contains(where: { $0.id == tag.id }) {
             selected.removeAll { $0.id == tag.id }
         } else {
@@ -228,14 +260,28 @@ struct TagPicker: View {
     }
 
     private func add() {
+        guard let store else { return }
         let name = newName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-        let tag = Tag(name: name, colorHex: newColorHex)
-        context.insert(tag)
-        selected.append(tag)
-        newName = ""
-        newColorHex = nextDefaultColor()
-        nameFocused = true
+        // 重名查重（case-insensitive）：命中则复用已存在 tag 而不是新建
+        if let existing = allTags.first(where: { $0.name.lowercased() == name.lowercased() }) {
+            if !selected.contains(where: { $0.id == existing.id }) {
+                selected.append(existing)
+            }
+            newName = ""
+            nameFocused = true
+            return
+        }
+        do {
+            let tag = try store.insertTag(NewTag(name: name, colorHex: newColorHex))
+            selected.append(tag)
+            newName = ""
+            newColorHex = nextDefaultColor()
+            nameFocused = true
+        } catch {
+            // 与删除标签路径一致：弹 alert 反馈用户，而非只 beep（VoiceOver 用户等于零反馈）
+            writeError = error.localizedDescription
+        }
     }
 }
 
@@ -258,16 +304,24 @@ struct ColorSwatchPicker: View {
         }
         .buttonStyle(.plain)
         .help("选择颜色")
+        .accessibilityLabel("标签颜色")
+        .accessibilityValue("当前 #\(hex)")
+        .accessibilityHint("双击打开调色板")
         .popover(isPresented: $showPopover) {
             VStack(spacing: 10) {
                 Text("选择颜色").font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 8), count: 4), spacing: 8) {
                     ForEach(palette, id: \.self) { c in
+                        let isCurrent = (hex == c)
                         Circle()
                             .fill(Color(hex: c) ?? .gray)
                             .frame(width: 26, height: 26)
-                            .overlay(Circle().stroke(Color.primary.opacity(hex == c ? 0.9 : 0), lineWidth: 2))
+                            .overlay(Circle().stroke(Color.primary.opacity(isCurrent ? 0.9 : 0), lineWidth: 2))
                             .onTapGesture { hex = c; showPopover = false }
+                            .accessibilityLabel("颜色 #\(c)")
+                            .accessibilityValue(isCurrent ? "已选中" : "未选中")
+                            .accessibilityAddTraits(isCurrent ? .isSelected : [])
+                            .accessibilityHint("双击选为标签颜色")
                     }
                 }
             }

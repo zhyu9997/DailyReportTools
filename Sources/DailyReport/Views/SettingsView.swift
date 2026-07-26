@@ -1,5 +1,4 @@
 import SwiftUI
-import SwiftData
 import AppKit
 import UserNotifications
 import UniformTypeIdentifiers
@@ -11,11 +10,26 @@ struct SettingsView: View {
     @AppStorage(AppState.Key.reminderMinute) private var reminderMinute = AppState.defaultReminderMinute
     @AppStorage(AppState.Key.appearance) private var appearanceRaw = AppearanceMode.system.rawValue
 
-    @Environment(\.modelContext) private var context
-    @State private var authorized = false
+    @Environment(\.appStore) private var store
+    @State private var authStatus: UNAuthorizationStatus = .notDetermined
     @State private var pendingRestore: Data?
-    @State private var restoreError: String?
+    @State private var actionError: String?
+    @State private var actionSuccess: String?
     @State private var launchAtLogin = false
+    @State private var isBusy = false
+
+    /// 是否已授权（含 provisional）
+    private var authorized: Bool {
+        authStatus == .authorized || authStatus == .provisional
+    }
+
+    /// 显示「marketing (build)」版本号，方便用户排查时一键复制
+    private var appVersionLabel: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let ver = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        return "\(ver) (\(build))"
+    }
 
     var body: some View {
         Form {
@@ -36,7 +50,7 @@ struct SettingsView: View {
                             }
                         } catch {
                             launchAtLogin = !newVal
-                            NSSound.beep()
+                            actionError = "登录项设置失败：\(error.localizedDescription)"
                         }
                     }
                 Text("开启后，开机登录时自动启动 DailyReport。首次开启系统可能弹授权提示。")
@@ -70,29 +84,69 @@ struct SettingsView: View {
                 HStack {
                     Button("请求通知权限") {
                         Task {
-                            authorized = await ReminderService.shared.requestAuthorization()
+                            authStatus = await ReminderService.shared.currentAuthorizationStatus()
+                            _ = await ReminderService.shared.requestAuthorization()
+                            authStatus = await ReminderService.shared.currentAuthorizationStatus()
                             reschedule()
                         }
                     }
+                    // 已授权状态请求按钮无意义，禁用避免误点
+                    .disabled(authorized)
                     Spacer()
-                    Text(authorized ? "✅ 已授权" : "尚未授权")
+                    Text(authorized ? "✅ 已授权" :
+                         (authStatus == .denied ? "⛔ 已拒绝" : "尚未授权"))
                         .font(.caption)
-                        .foregroundStyle(authorized ? .green : .secondary)
+                        .foregroundStyle(authorized ? .green :
+                                         (authStatus == .denied ? .red : .secondary))
+                }
+                if authStatus == .denied {
+                    // 用户曾明确拒绝；只能在系统设置里改回，提供直达入口
+                    HStack {
+                        Button("打开系统通知设置…") {
+                            ReminderService.shared.openSystemNotificationSettings()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Spacer()
+                    }
+                    Text("已在系统层拒绝通知。打开「系统设置 → 通知 → DailyReport」允许后，回到这里重新启用即可。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
             Section("数据") {
                 Button("立即备份") { manualBackup() }
+                    .disabled(isBusy)
                 Text("写入自动备份目录（每次启动也会自动备份一次）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Divider()
                 Button("导出全部为 JSON…") { exportJSON() }
+                    .disabled(isBusy)
                 Button("从 JSON 导入…", role: .destructive) { importJSON() }
+                    .disabled(isBusy)
                 Divider()
                 LabeledContent("自动备份") {
                     Button("打开备份文件夹") { openBackupFolder() }
                 }
+                LabeledContent("日志") {
+                    Button("打开日志文件夹") { openLogsFolder() }
+                }
+                if isBusy {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("处理中…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Section("关于数据") {
+                LabeledContent("数据库", value: AppDatabase.primaryURL.path)
+                LabeledContent("日志", value: AppLogger.logFileURL.path)
+                LabeledContent("备份", value: BackupService.backupDirectory.path)
             }
 
             Section("快捷键") {
@@ -100,7 +154,7 @@ struct SettingsView: View {
             }
 
             Section("关于") {
-                LabeledContent("版本", value: "1.0.0")
+                LabeledContent("版本", value: appVersionLabel)
                 LabeledContent("最低系统", value: "macOS 14.0")
                 LabeledContent("作者", value: "zhyu")
             }
@@ -110,7 +164,12 @@ struct SettingsView: View {
         .frame(width: 460)
         .task {
             launchAtLogin = SMAppService.mainApp.status == .enabled
-            authorized = await ReminderService.shared.currentAuthorization()
+            authStatus = await ReminderService.shared.currentAuthorizationStatus()
+        }
+        // 用户从「打开系统通知设置」切到系统设置改授权，回到 DailyReport 时窗口未 dismiss，
+        // .task 不会重跑；监听 didBecomeActive 重拉一次状态，避免显示陈旧的「⛔ 已拒绝」
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { authStatus = await ReminderService.shared.currentAuthorizationStatus() }
         }
         .alert("导入会清空当前数据", isPresented: Binding(
             get: { pendingRestore != nil },
@@ -121,13 +180,21 @@ struct SettingsView: View {
         } message: {
             Text("确定要从 JSON 恢复吗？当前所有数据将被替换。建议先「导出」做一次当前快照。")
         }
-        .alert("导入失败", isPresented: Binding(
-            get: { restoreError != nil },
-            set: { if !$0 { restoreError = nil } }
+        .alert("操作失败", isPresented: Binding(
+            get: { actionError != nil },
+            set: { if !$0 { actionError = nil } }
         )) {
-            Button("好") { restoreError = nil }
+            Button("好") { actionError = nil }
         } message: {
-            Text(restoreError ?? "")
+            Text(actionError ?? "")
+        }
+        .alert("完成", isPresented: Binding(
+            get: { actionSuccess != nil },
+            set: { if !$0 { actionSuccess = nil } }
+        )) {
+            Button("好") { actionSuccess = nil }
+        } message: {
+            Text(actionSuccess ?? "")
         }
     }
 
@@ -144,24 +211,26 @@ struct SettingsView: View {
     // MARK: - 数据导入/导出
 
     private func exportJSON() {
-        let snap = BackupService.snapshot(in: context)
-        guard let data = try? BackupService.encode(snap) else {
-            NSSound.beep()
-            return
-        }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "DailyReport-Backup-\(Date().isoDay).json"
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard !isBusy else { return }
+        guard let store else { return }
+        isBusy = true
+        defer { isBusy = false }
+        let snap = BackupService.snapshotAtomic(in: store)
         do {
+            let data = try BackupService.encode(snap)
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "DailyReport-Backup-\(Date().isoDay).json"
+            panel.canCreateDirectories = true
+            guard panel.runModal() == .OK, let url = panel.url else { return }
             try data.write(to: url, options: .atomic)
-            NSSound.beep()
+            actionSuccess = "已导出快照到 \(url.lastPathComponent)"
         } catch {
-            NSSound.beep()
+            actionError = "导出失败：\(error.localizedDescription)"
         }
     }
 
     private func importJSON() {
+        guard !isBusy else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
@@ -172,14 +241,15 @@ struct SettingsView: View {
     }
 
     private func confirmImport() {
-        guard let data = pendingRestore else { return }
+        guard let data = pendingRestore, let store else { return }
+        isBusy = true
+        defer { isBusy = false }
         do {
             let snap = try BackupService.decode(data)
-            try BackupService.restore(snap, in: context)
-            NSSound.beep()
+            try BackupService.restore(snap, in: store)
+            actionSuccess = "导入完成"
         } catch {
-            restoreError = "\(error)"
-            NSSound.beep()
+            actionError = "导入失败：\(error.localizedDescription)"
         }
         pendingRestore = nil
     }
@@ -188,12 +258,20 @@ struct SettingsView: View {
         NSWorkspace.shared.activateFileViewerSelecting([BackupService.backupDirectory])
     }
 
+    private func openLogsFolder() {
+        NSWorkspace.shared.activateFileViewerSelecting([AppLogger.logFileURL])
+    }
+
     private func manualBackup() {
-        if let url = BackupService.manualBackup(in: context) {
-            NSSound.beep()
+        guard !isBusy else { return }
+        guard let store else { return }
+        isBusy = true
+        defer { isBusy = false }
+        if let url = BackupService.manualBackup(in: store) {
+            actionSuccess = "已写入备份 \(url.lastPathComponent)"
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {
-            NSSound.beep()
+            actionError = "备份失败：写入 dbbackup 目录失败，详见日志。"
         }
     }
 }

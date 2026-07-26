@@ -34,5 +34,8 @@ struct KindPicker: View {
         }
         .buttonStyle(.plain)
         .help("标记为「\(kind.rawValue)」")
+        .accessibilityLabel(kind.rawValue)
+        .accessibilityValue(isSelected ? "已选中" : "未选中")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

@@ -1,14 +1,14 @@
 import SwiftUI
-import SwiftData
 
 /// 会议纪要：列表 + 新增/编辑
 struct MeetingView: View {
-    @Environment(\.modelContext) private var context
+    @Environment(\.appStore) private var store
     @Environment(NavigationCoordinator.self) private var coordinator
-    @Query(sort: \Meeting.timestamp, order: .reverse) private var meetings: [Meeting]
 
-    @State private var editing: Meeting?
+    @State private var editing: MeetingRecord?
     @State private var creating = false
+
+    private var meetings: [MeetingRecord] { store?.meetings ?? [] }
 
     var body: some View {
         NavigationStack {
@@ -53,16 +53,25 @@ struct MeetingView: View {
 
 /// 单条会议卡片
 struct MeetingCard: View {
-    @Environment(\.modelContext) private var context
-    @Bindable var meeting: Meeting
+    @Environment(\.appStore) private var store
+    let meeting: MeetingRecord
     var onEdit: () -> Void
 
     @State private var isAddingReview = false
     @State private var newReviewer = ""
     @State private var newOpinion = ""
+    @State private var summaryDraft = ""
+    @State private var summaryLoaded = false
+    @State private var debounceTask: Task<Void, Never>?
+    /// 写失败反馈：saveAdd / flushSummary 走 throw-aware 入口，避免 store?.run 吞 throws 后 UI 假成功
+    @State private var writeError: String?
 
-    private var validReviews: [Review] {
-        meeting.orderedReviews.filter { !$0.reviewer.isEmpty || !$0.opinion.isEmpty }
+    private var tags: [TagRecord] { store?.tagsByMeeting[meeting.id] ?? [] }
+    private var reviews: [ReviewRecord] { store?.reviewsByMeeting[meeting.id] ?? [] }
+
+    private var validReviews: [ReviewRecord] {
+        reviews.filter { !$0.reviewer.isEmpty || !$0.opinion.isEmpty }
+            .sorted { $0.order < $1.order }
     }
 
     var body: some View {
@@ -83,9 +92,9 @@ struct MeetingCard: View {
                     .font(.caption).foregroundStyle(.tertiary)
             }
             summaryEditor
-            if !meeting.tags.isEmpty {
+            if !tags.isEmpty {
                 HStack(spacing: 4) {
-                    ForEach(meeting.tags) { tag in
+                    ForEach(tags) { tag in
                         Text(tag.name)
                             .font(.caption2)
                             .padding(.horizontal, 5).padding(.vertical, 1)
@@ -94,13 +103,13 @@ struct MeetingCard: View {
                     }
                 }
             }
-            let reviews = validReviews
-            if !reviews.isEmpty || isAddingReview {
+            let list = validReviews
+            if !list.isEmpty || isAddingReview {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("评审（\(reviews.count)）")
+                    Text("评审（\(list.count)）")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    ForEach(reviews) { r in
+                    ForEach(list) { r in
                         reviewBlock(r)
                     }
                     if isAddingReview {
@@ -125,6 +134,14 @@ struct MeetingCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.2), lineWidth: 1))
+        .alert("写入失败", isPresented: Binding(
+            get: { writeError != nil },
+            set: { if !$0 { writeError = nil } }
+        )) {
+            Button("好", role: .cancel) { writeError = nil }
+        } message: {
+            Text(writeError ?? "")
+        }
     }
 
     /// 卡片内联新增评审
@@ -175,13 +192,19 @@ struct MeetingCard: View {
         let r = newReviewer.trimmingCharacters(in: .whitespaces)
         let o = newOpinion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !r.isEmpty || !o.isEmpty else { cancelAdd(); return }
-        let order = (meeting.orderedReviews.map(\.order).max() ?? -1) + 1
-        let review = Review(reviewer: r, opinion: o, order: order)
-        review.meeting = meeting
-        context.insert(review)
+        let ok = write({ try $0.addReview(to: meeting.id, reviewer: r, opinion: o) })
+        guard ok else { return }   // 写失败时保留草稿，让用户重试或修改
         newReviewer = ""
         newOpinion = ""
         withAnimation(.easeInOut(duration: 0.18)) { isAddingReview = false }
+    }
+
+    /// 统一写入口：返回 true 表示成功，失败时弹 alert 反馈（与 WorkEntryCard/TagPicker 同模式）
+    @discardableResult
+    private func write(_ block: (AppStore) throws -> Void) -> Bool {
+        guard let store else { return false }
+        do { try block(store); return true }
+        catch { writeError = error.localizedDescription; return false }
     }
 
     private func cancelAdd() {
@@ -202,7 +225,7 @@ struct MeetingCard: View {
             }
         } else {
             ZStack(alignment: .topLeading) {
-                if meeting.summary.isEmpty {
+                if summaryDraft.isEmpty {
                     Text("点这里写概要…")
                         .font(.subheadline)
                         .foregroundStyle(.tertiary)
@@ -210,19 +233,42 @@ struct MeetingCard: View {
                         .padding(.vertical, 7)
                         .allowsHitTesting(false)
                 }
-                TextEditor(text: $meeting.summary)
+                TextEditor(text: $summaryDraft)
                     .font(.subheadline)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 36, alignment: .top)
                     .padding(.horizontal, 4)
                     .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+                    .onChange(of: summaryDraft) { _, _ in scheduleFlush() }
+                    .onAppear {
+                        if !summaryLoaded {
+                            summaryDraft = meeting.summary
+                            summaryLoaded = true
+                        }
+                    }
+                    .onDisappear {
+                        debounceTask?.cancel()
+                        flushSummary()
+                    }
+                    // 视图被 ForEach 复用到另一条会议时（id 变了）：丢弃草稿，下次 onAppear 重载
+                    .onChange(of: meeting.id) { _, _ in
+                        debounceTask?.cancel()
+                        debounceTask = nil
+                        summaryDraft = ""
+                        summaryLoaded = false
+                    }
+                    // 外部更新（如 MeetingFormView 保存）同步到草稿：用户未在编辑时才覆盖
+                    .onChange(of: meeting.summary) { _, newValue in
+                        guard summaryLoaded, debounceTask == nil else { return }
+                        summaryDraft = newValue
+                    }
             }
         }
     }
 
     @ViewBuilder
-    private func reviewBlock(_ r: Review) -> some View {
+    private func reviewBlock(_ r: ReviewRecord) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if !r.reviewer.isEmpty {
                 Label(r.reviewer, systemImage: "person.circle")
@@ -230,7 +276,7 @@ struct MeetingCard: View {
                     .foregroundStyle(.tint)
             }
             if !r.opinion.isEmpty {
-                Text("“\(r.opinion)”")
+                Text("「\(r.opinion)」")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -238,6 +284,24 @@ struct MeetingCard: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
             }
         }
+    }
+
+    /// onChange 回调：手动 debounce 0.3s（macOS 14 没有 .onChange(debounce:)，macOS 15+ 才支持）
+    /// 每次 summaryDraft 变化取消上一个未触发的 Task，重新计时；onDisappear 兜底立即 flush
+    private func scheduleFlush() {
+        debounceTask?.cancel()
+        debounceTask = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            flushSummary()
+        }
+    }
+
+    /// 真正执行写回
+    private func flushSummary() {
+        guard summaryLoaded, summaryDraft != meeting.summary else { return }
+        write { try $0.updateMeeting(meeting.id) { $0.summary = summaryDraft } }
+        debounceTask = nil
     }
 }
 
@@ -250,22 +314,23 @@ struct ReviewDraft: Identifiable {
 
 /// 新增 / 编辑表单
 struct MeetingFormView: View {
-    @Environment(\.modelContext) private var context
+    @Environment(\.appStore) private var store
     @Environment(\.dismiss) private var dismiss
 
-    var meeting: Meeting?
+    var meeting: MeetingRecord?
     var onDone: (Bool) -> Void
 
     @State private var topic = ""
     @State private var summary = ""
     @State private var timestamp = Date()
-    @State private var selectedTags: [Tag] = []
+    @State private var selectedTags: [TagRecord] = []
     @State private var reviewDrafts: [ReviewDraft] = []
     @State private var isRecurring = false
     @State private var recurrenceUnit: RecurrenceUnit = .daily
     @State private var recurrenceInterval = 1
     @State private var recurrenceWeekdays: [Int] = []
     @State private var recurrenceMonthDays: [Int] = []
+    @State private var saveError: String?
 
     private var validReviewCount: Int {
         reviewDrafts.filter { !$0.reviewer.trimmingCharacters(in: .whitespaces).isEmpty
@@ -297,6 +362,14 @@ struct MeetingFormView: View {
         }
         .frame(width: 560)
         .onAppear { syncDraft() }
+        .alert("保存失败", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("好", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
+        }
     }
 
     private var content: some View {
@@ -396,13 +469,16 @@ struct MeetingFormView: View {
         topic = m.topic
         summary = m.summary
         timestamp = m.timestamp
-        selectedTags = m.tags
+        selectedTags = store?.tagsByMeeting[m.id] ?? []
         isRecurring = m.isRecurring
         recurrenceUnit = m.recurrenceUnit
         recurrenceInterval = m.recurrenceInterval
         recurrenceWeekdays = m.recurrenceWeekdays
         recurrenceMonthDays = m.recurrenceMonthDays
-        reviewDrafts = m.orderedReviews.map { ReviewDraft(reviewer: $0.reviewer, opinion: $0.opinion) }
+        let existing = store?.reviewsByMeeting[m.id] ?? []
+        reviewDrafts = existing
+            .sorted { $0.order < $1.order }
+            .map { ReviewDraft(reviewer: $0.reviewer, opinion: $0.opinion) }
     }
 
     private func save() {
@@ -415,41 +491,42 @@ struct MeetingFormView: View {
                 reviewer: $0.reviewer.trimmingCharacters(in: .whitespaces),
                 opinion: $0.opinion.trimmingCharacters(in: .whitespacesAndNewlines)) }
             .filter { !$0.reviewer.isEmpty || !$0.opinion.isEmpty }
+            .enumerated()
+            .map { (idx, d) in NewReview(reviewer: d.reviewer, opinion: d.opinion, order: idx) }
 
-        if let m = meeting {
-            m.topic = t
-            m.summary = summary
-            m.timestamp = timestamp
-            m.tags = selectedTags
-            m.isRecurring = isRecurring
-            m.recurrenceUnit = recurrenceUnit
-            m.recurrenceInterval = recurrenceInterval
-            m.recurrenceWeekdays = recurrenceWeekdays
-            m.recurrenceMonthDays = recurrenceMonthDays
-            // 删除旧评审
-            for r in m.reviews { context.delete(r) }
-            // 插入新评审
-            for (i, d) in cleaned.enumerated() {
-                let r = Review(reviewer: d.reviewer, opinion: d.opinion, order: i)
-                r.meeting = m
-                context.insert(r)
+        do {
+            if let m = meeting {
+                // 三步走独立事务（每步原子），任一失败后续不执行 + 抛错给用户
+                // 不再用 store?.run 吞 throws 假装成功
+                try store?.updateMeeting(m.id) { rec in
+                    rec.topic = t
+                    rec.summary = summary
+                    rec.timestamp = timestamp
+                    rec.isRecurring = isRecurring
+                    rec.recurrenceUnit = recurrenceUnit
+                    rec.recurrenceInterval = recurrenceInterval
+                    rec.recurrenceWeekdays = recurrenceWeekdays
+                    rec.recurrenceMonthDays = recurrenceMonthDays
+                }
+                try store?.setMeetingTags(m.id, tagIds: selectedTags.map(\.id))
+                try store?.setMeetingReviews(meetingId: m.id, with: cleaned)
+            } else {
+                _ = try store?.insertMeeting(NewMeeting(
+                    topic: t,
+                    summary: summary,
+                    timestamp: timestamp,
+                    isRecurring: isRecurring,
+                    recurrenceUnit: recurrenceUnit,
+                    recurrenceInterval: recurrenceInterval,
+                    recurrenceWeekdays: recurrenceWeekdays,
+                    recurrenceMonthDays: recurrenceMonthDays,
+                    tagIds: selectedTags.map(\.id),
+                    reviews: cleaned
+                ))
             }
-        } else {
-            let m = Meeting(topic: t,
-                            summary: summary,
-                            timestamp: timestamp,
-                            isRecurring: isRecurring,
-                            recurrenceUnit: recurrenceUnit,
-                            recurrenceInterval: recurrenceInterval,
-                            recurrenceWeekdays: recurrenceWeekdays,
-                            recurrenceMonthDays: recurrenceMonthDays)
-            context.insert(m)
-            m.tags = selectedTags
-            for (i, d) in cleaned.enumerated() {
-                let r = Review(reviewer: d.reviewer, opinion: d.opinion, order: i)
-                r.meeting = m
-                context.insert(r)
-            }
+        } catch {
+            saveError = error.localizedDescription
+            return
         }
         onDone(true)
         dismiss()

@@ -1,16 +1,14 @@
 import SwiftUI
-import SwiftData
 
 /// 时间线里的任务卡片：可编辑、可删除、可拖拽到状态列改分类
 struct WorkEntryCard: View {
-    @Bindable var entry: WorkEntry
-    @Environment(\.modelContext) private var context
-    @Query(sort: \Tag.name) private var allTags: [Tag]
+    @Environment(\.appStore) private var store
+    let entry: WorkEntryRecord
 
     @State private var editing = false
     @State private var draftTitle = ""
     @State private var draftDetail = ""
-    @State private var draftTags: [Tag] = []
+    @State private var draftTags: [TagRecord] = []
     @State private var draftFinishDate: Date = Date()
     @State private var draftHelper: String = ""
     @State private var draftIsRecurring = false
@@ -26,6 +24,10 @@ struct WorkEntryCard: View {
     @State private var newName = ""
     @State private var newColorHex = "#4A90D9"
     @State private var showDeleteConfirm = false
+    @State private var writeError: String?
+
+    private var allTags: [TagRecord] { store?.tags ?? [] }
+    private var entryTags: [TagRecord] { store?.tagsByEntry[entry.id] ?? [] }
 
     private var kindColor: Color {
         switch entry.kind {
@@ -45,11 +47,29 @@ struct WorkEntryCard: View {
         .contentShape(Rectangle())
         .draggable(entry.id.uuidString)
         .alert("删除这条任务？", isPresented: $showDeleteConfirm) {
-            Button("删除", role: .destructive) { context.delete(entry) }
+            Button("删除", role: .destructive) { write { try $0.deleteEntry(entry.id) } }
             Button("取消", role: .cancel) {}
         } message: {
             Text("「\(entry.title)」将被删除，可在设置页从最近备份恢复。")
         }
+        .alert("写入失败", isPresented: Binding(
+            get: { writeError != nil },
+            set: { if !$0 { writeError = nil } }
+        )) {
+            Button("好", role: .cancel) { writeError = nil }
+        } message: {
+            Text(writeError ?? "")
+        }
+    }
+
+    /// 统一的写入口包装：失败时弹 alert 反馈给用户，而不是 store.run 静默吞 throws
+    /// 适用于 commit / 优先级切换 / blocker 状态切换 / 标签增删 / 删除等所有写路径
+    /// 返回 true 表示成功，调用方据此决定是否同步本地状态（如退出 editing）
+    @discardableResult
+    private func write(_ block: (AppStore) throws -> Void) -> Bool {
+        guard let store else { return false }
+        do { try block(store); return true }
+        catch { writeError = error.localizedDescription; return false }
     }
 
     // MARK: 只读展示
@@ -119,7 +139,7 @@ struct WorkEntryCard: View {
                 Menu {
                     ForEach(BlockerStatus.allCases) { s in
                         Button {
-                            entry.blockerStatus = s
+                            write { try $0.updateEntry(entry.id) { $0.blockerStatus = s } }
                         } label: {
                             Label(s.localizedName,
                                   systemImage: s == entry.blockerStatus ? "checkmark.circle.fill" : "circle")
@@ -146,7 +166,7 @@ struct WorkEntryCard: View {
     /// 标签行：当前标签 chip（右键移除）+ 标签 Menu（勾选已有/新建）
     private var tagRow: some View {
         HStack(spacing: 4) {
-            ForEach(entry.tags) { tag in
+            ForEach(entryTags) { tag in
                 Text(tag.name)
                     .font(.caption2)
                     .padding(.horizontal, 5).padding(.vertical, 1)
@@ -154,7 +174,7 @@ struct WorkEntryCard: View {
                     .clipShape(Capsule())
                     .contextMenu {
                         Button("移除标签", role: .destructive) {
-                            entry.tags.removeAll { $0.id == tag.id }
+                            removeTag(tag.id)
                         }
                     }
                     .help("右键移除")
@@ -169,10 +189,10 @@ struct WorkEntryCard: View {
                 Text("还没有标签").foregroundStyle(.secondary)
             } else {
                 ForEach(allTags) { tag in
-                    let on = entry.tags.contains { $0.id == tag.id }
+                    let on = entryTags.contains { $0.id == tag.id }
                     Button {
-                        if on { entry.tags.removeAll { $0.id == tag.id } }
-                        else { entry.tags.append(tag) }
+                        if on { removeTag(tag.id) }
+                        else { addTag(tag.id) }
                     } label: {
                         Label(tag.name, systemImage: on ? "checkmark" : "")
                     }
@@ -181,9 +201,9 @@ struct WorkEntryCard: View {
             }
             Button("新建标签…") { showNewTag = true }
         } label: {
-            Image(systemName: "tag\(entry.tags.isEmpty ? "" : ".fill")")
+            Image(systemName: "tag\(entryTags.isEmpty ? "" : ".fill")")
                 .font(.caption)
-                .foregroundStyle(entry.tags.isEmpty ? Color.secondary : kindColor)
+                .foregroundStyle(entryTags.isEmpty ? Color.secondary : kindColor)
         }
         .buttonStyle(.borderless)
         .help("添加 / 移除标签")
@@ -216,12 +236,26 @@ struct WorkEntryCard: View {
     private func addNewTag() {
         let name = newName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-        let t = Tag(name: name, colorHex: newColorHex)
-        context.insert(t)
-        entry.tags.append(t)
+        guard let store else { return }
+        let tag: TagRecord
+        do { tag = try store.insertTag(NewTag(name: name, colorHex: newColorHex)) }
+        catch { writeError = error.localizedDescription; return }
+        addTag(tag.id)
         newName = ""
         newColorHex = "#4A90D9"
         showNewTag = false
+    }
+
+    private func addTag(_ tagId: UUID) {
+        let current = entryTags.map(\.id)
+        guard !current.contains(tagId) else { return }
+        let next = current + [tagId]
+        write { try $0.updateEntry(entry.id, mutations: { _ in }, newTagIds: next) }
+    }
+
+    private func removeTag(_ tagId: UUID) {
+        let next = entryTags.map(\.id).filter { $0 != tagId }
+        write { try $0.updateEntry(entry.id, mutations: { _ in }, newTagIds: next) }
     }
 
     // MARK: 编辑态（改标题/详情/标签/完成时间/求助人；分类用拖拽改）
@@ -325,7 +359,7 @@ struct WorkEntryCard: View {
     private func syncDraft() {
         draftTitle = entry.title
         draftDetail = entry.detail
-        draftTags = entry.tags
+        draftTags = entryTags
         draftFinishDate = entry.finishDate ?? Date()
         draftHelper = entry.helper ?? ""
         draftIsRecurring = entry.isRecurring
@@ -340,29 +374,34 @@ struct WorkEntryCard: View {
     private func commit() {
         let title = draftTitle.trimmingCharacters(in: .whitespaces)
         guard !title.isEmpty else { return }
-        entry.title = title
-        entry.detail = draftDetail
-        entry.tags = draftTags
-        switch entry.kind {
-        case .done, .planned:
-            entry.finishDate = draftFinishDate
-        case .blocker:
-            entry.helper = draftHelper.trimmingCharacters(in: .whitespaces).isEmpty
-                ? nil
-                : draftHelper.trimmingCharacters(in: .whitespaces)
-            entry.blockerStatus = draftBlockerStatus
-        }
-        if entry.kind == .planned {
-            entry.isRecurring = draftIsRecurring
-            entry.recurrenceUnit = draftRecurrenceUnit
-            entry.recurrenceInterval = draftRecurrenceInterval
-            entry.recurrenceWeekdays = draftRecurrenceWeekdays
-            entry.recurrenceMonthDays = draftRecurrenceMonthDays
-        } else {
-            entry.isRecurring = false
-        }
-        entry.priority = draftPriority
-        editing = false
+        let helperTrimmed = draftHelper.trimmingCharacters(in: .whitespaces)
+        // 用返回值而非 writeError == nil 判断：上次写失败的 writeError 可能尚未清空，
+        // 即使本次写成功，writeError != nil 也会让 editing 卡住
+        let ok = write({
+            try $0.updateEntry(entry.id, mutations: { rec in
+                rec.title = title
+                rec.detail = draftDetail
+                switch rec.kind {
+                case .done, .planned:
+                    rec.finishDate = draftFinishDate
+                case .blocker:
+                    rec.helper = helperTrimmed.isEmpty ? nil : helperTrimmed
+                    rec.blockerStatus = draftBlockerStatus
+                }
+                if rec.kind == .planned {
+                    rec.isRecurring = draftIsRecurring
+                    rec.recurrenceUnit = draftRecurrenceUnit
+                    rec.recurrenceInterval = draftRecurrenceInterval
+                    rec.recurrenceWeekdays = draftRecurrenceWeekdays
+                    rec.recurrenceMonthDays = draftRecurrenceMonthDays
+                } else {
+                    rec.isRecurring = false
+                }
+                rec.priority = draftPriority
+            }, newTagIds: draftTags.map(\.id))
+        })
+        // 写成功才退出 editing；失败时 write() 已弹 alert，editing 保留草稿供用户重试
+        if ok { editing = false }
     }
 
     /// 优先级徽章：点击可直接切换
@@ -371,7 +410,7 @@ struct WorkEntryCard: View {
         Menu {
             ForEach(Priority.allCases) { x in
                 Button {
-                    entry.priority = x
+                    write { try $0.updateEntry(entry.id) { $0.priority = x } }
                 } label: {
                     Label(x.localizedName,
                           systemImage: x == p ? "checkmark.circle.fill" : "flag.fill")
@@ -392,7 +431,8 @@ struct WorkEntryCard: View {
 
 /// 把一批任务按 完成/计划/问题 分组的只读汇总（今日总结用）
 struct WorkSummaryView: View {
-    let entries: [WorkEntry]
+    @Environment(\.appStore) private var store
+    let entries: [WorkEntryRecord]
     var emptyHint: String = "今天还没有记录的任务。"
 
     var body: some View {
@@ -411,7 +451,7 @@ struct WorkSummaryView: View {
         }
     }
 
-    private func section(_ kind: WorkKind, _ group: [WorkEntry]) -> some View {
+    private func section(_ kind: WorkKind, _ group: [WorkEntryRecord]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: kind.icon).foregroundStyle(color(kind))
@@ -419,68 +459,76 @@ struct WorkSummaryView: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(group) { e in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        if e.isOverdue {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.red)
-                                .font(.caption)
-                        } else {
-                            Text("·")
-                        }
-                        Text(e.title)
-                            .font(.body)
-                            .foregroundStyle(e.isOverdue ? .red : .primary)
-                        if e.isOverdue {
-                            Label("逾期", systemImage: "clock.badge.xmark")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color.red.opacity(0.15))
-                                .foregroundStyle(.red)
-                                .clipShape(Capsule())
-                        }
-                        if e.kind == .planned {
-                            Label(e.priority.localizedName, systemImage: "flag.fill")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(e.priority.swiftUIColor.opacity(0.15))
-                                .foregroundStyle(e.priority.swiftUIColor)
-                                .clipShape(Capsule())
-                        }
-                        if e.isRecurring && e.kind == .planned {
-                            Label(e.recurrenceLabel, systemImage: "repeat")
+                    summaryRow(e)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func summaryRow(_ e: WorkEntryRecord) -> some View {
+        let tags: [TagRecord] = store?.tagsByEntry[e.id] ?? []
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if e.isOverdue {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                } else {
+                    Text("·")
+                }
+                Text(e.title)
+                    .font(.body)
+                    .foregroundStyle(e.isOverdue ? .red : .primary)
+                if e.isOverdue {
+                    Label("逾期", systemImage: "clock.badge.xmark")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.red.opacity(0.15))
+                        .foregroundStyle(.red)
+                        .clipShape(Capsule())
+                }
+                if e.kind == .planned {
+                    Label(e.priority.localizedName, systemImage: "flag.fill")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(e.priority.swiftUIColor.opacity(0.15))
+                        .foregroundStyle(e.priority.swiftUIColor)
+                        .clipShape(Capsule())
+                }
+                if e.isRecurring && e.kind == .planned {
+                    Label(e.recurrenceLabel, systemImage: "repeat")
+                        .font(.caption2)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.blue.opacity(0.15))
+                        .foregroundStyle(.blue)
+                        .clipShape(Capsule())
+                }
+                if e.kind == .blocker {
+                    Label(e.blockerStatus.localizedName, systemImage: "circle.fill")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(e.blockerStatus.swiftUIColor.opacity(0.15))
+                        .foregroundStyle(e.blockerStatus.swiftUIColor)
+                        .clipShape(Capsule())
+                }
+                if !tags.isEmpty {
+                    HStack(spacing: 3) {
+                        ForEach(tags) { tag in
+                            Text(tag.name)
                                 .font(.caption2)
                                 .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color.blue.opacity(0.15))
-                                .foregroundStyle(.blue)
+                                .background(tag.swiftUIColor.opacity(0.2))
                                 .clipShape(Capsule())
                         }
-                        if e.kind == .blocker {
-                            Label(e.blockerStatus.localizedName, systemImage: "circle.fill")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(e.blockerStatus.swiftUIColor.opacity(0.15))
-                                .foregroundStyle(e.blockerStatus.swiftUIColor)
-                                .clipShape(Capsule())
-                        }
-                        if !e.tags.isEmpty {
-                            HStack(spacing: 3) {
-                                ForEach(e.tags) { tag in
-                                    Text(tag.name)
-                                        .font(.caption2)
-                                        .padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(tag.swiftUIColor.opacity(0.2))
-                                        .clipShape(Capsule())
-                                }
-                            }
-                        }
-                    }
-                    if !e.detail.isEmpty {
-                        Text(e.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 14)
                     }
                 }
+            }
+            if !e.detail.isEmpty {
+                Text(e.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 14)
             }
         }
     }

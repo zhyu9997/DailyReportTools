@@ -17,3 +17,8 @@ build/
 
 # 日志
 *.log
+
+# 运行时本地数据（开发期生成，不可提交）
+db/
+dbbackup/
+logs/

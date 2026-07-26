@@ -48,7 +48,7 @@ struct XLSXWriter {
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
         <sheets>
-        <sheet name="\(escape(sheetName))" sheetId="1" r:id="rId1"/>
+        <sheet name="\(Self.escape(sheetName))" sheetId="1" r:id="rId1"/>
         </sheets>
         </workbook>
         """.utf8)
@@ -70,8 +70,8 @@ struct XLSXWriter {
         for (rowIndex, row) in rows.enumerated() {
             s += "<row r=\"\(rowIndex + 1)\">"
             for (colIndex, value) in row.enumerated() {
-                let ref = "\(columnLetter(colIndex + 1))\(rowIndex + 1)"
-                s += "<c r=\"\(ref)\" t=\"inlineStr\"><is><t xml:space=\"preserve\">\(escape(value))</t></is></c>"
+                let ref = "\(Self.columnLetter(colIndex + 1))\(rowIndex + 1)"
+                s += "<c r=\"\(ref)\" t=\"inlineStr\"><is><t xml:space=\"preserve\">\(Self.escape(value))</t></is></c>"
             }
             s += "</row>"
         }
@@ -80,7 +80,8 @@ struct XLSXWriter {
     }
 
     // MARK: helpers
-    private func escape(_ s: String) -> String {
+    /// XML 转义：转义 4 个预定义实体并过滤 XML 1.0 非法控制字符（保留 \t \n \r）
+    static func escape(_ s: String) -> String {
         var out = ""
         for ch in s.unicodeScalars {
             switch ch {
@@ -99,7 +100,7 @@ struct XLSXWriter {
     }
 
     /// 1 索引列号 → 字母（1→A, 26→Z, 27→AA）
-    private func columnLetter(_ n: Int) -> String {
+    static func columnLetter(_ n: Int) -> String {
         var n = n
         var out = ""
         while n > 0 {
@@ -119,7 +120,7 @@ struct ZipBuilder {
         let (dosDate, dosTime) = dosDateTime(Date())
 
         for entry in entries {
-            let crc = crc32(entry.data)
+            let crc = Self.crc32(entry.data)
             let offset = UInt32(output.count)
             let size = UInt32(entry.data.count)
             let nameBytes = Array(entry.name.utf8)
@@ -192,7 +193,8 @@ struct ZipBuilder {
         return (dosDate, dosTime)
     }
 
-    private func crc32(_ data: Data) -> UInt32 {
+    /// IEEE 802.3 CRC-32（与 zlib / PNG 一致），返回值未取反前 0xFFFFFFFF、运算后再异或
+    static func crc32(_ data: Data) -> UInt32 {
         var crc: UInt32 = 0xFFFFFFFF
         for byte in data {
             crc ^= UInt32(byte)

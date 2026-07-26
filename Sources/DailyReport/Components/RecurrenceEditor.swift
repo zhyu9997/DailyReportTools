@@ -33,6 +33,15 @@ struct RecurrenceEditor: View {
                     .frame(width: 190)
                     Spacer(minLength: 0)
                 }
+                .onChange(of: unit) { _, newUnit in
+                    // 切单位时清掉对侧数组，避免脏数据写库
+                    // （Recurrence.nextFutureDate 只读当前单位对应的数组，但备份/解码会持久化所有字段）
+                    switch newUnit {
+                    case .daily:   weekdays = []; monthDays = []
+                    case .weekly:  monthDays = []
+                    case .monthly: weekdays = []
+                    }
+                }
                 options
             }
         }

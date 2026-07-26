@@ -14,7 +14,7 @@
 - **周报** — 按周翻阅，任务按**归属日**分天（完成 / 计划按 finishDate，问题按发生日）；提前完成的任务落回实际完成那天；统计卡 + 导出 XLSX（带「星期」列，按完成日排序）
 - **标签** — 任务 / 日报 / 会议共享，自定义颜色，回车即建
 - **周期性** — 会议与计划任务逾期原地推进；计划任务完成时克隆下一次（保留滚动计划）
-- **数据安全** — 设置页支持 JSON 全量导出 / 导入；导入前自动留快照；Schema 迁移失败 wipe 前自动备份到 `~/Library/Application Support/com.zhyu.dailyreport/backups/`
+- **数据安全** — 启动自动 boot 快照 + 每周五触发 weekly 备份（周五没开自动在周六/周日补）；导入前自动留 pre-import 快照；JSON 全量导出 / 导入；GRDB 主库打开失败时三级容错（归档 + JSON 抢救 + 空库重建 / fallback）
 - **每日提醒** — 可设时间的本地通知
 - **外观切换** — 跟随系统 / 浅色 / 深色，设置页一键切换（主窗口、菜单栏面板、设置窗统一）
 - **开机自启** — 设置页开关；基于 `SMAppService` 注册登录项，首次开启系统授权一次
@@ -24,13 +24,13 @@
 
 ## 构建
 
-需要 **Xcode**（Command Line Tools 缺少 SwiftData 宏插件，脚本会自动切换到 Xcode）。
+需要 macOS 14+ 与 **Swift 6 / Command Line Tools**（无需完整 Xcode）。
 
 ```bash
 bash scripts/build-app.sh
 ```
 
-产物：`DailyReport.app`。
+产物：`DailyReport.app`（ad-hoc 签名，与可执行文件同级的 `db/`、`dbbackup/`、`logs/` 目录会在首次启动自动创建）。
 
 启动：
 
@@ -38,23 +38,41 @@ bash scripts/build-app.sh
 open DailyReport.app
 ```
 
-卸载：
+卸载（数据目录一并删除）：
 
 ```bash
-rm -rf DailyReport.app
+rm -rf DailyReport.app db dbbackup logs
 ```
+
+## 测试
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+```
+
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。60 个核心算法单测覆盖 `Recurrence` 边缘 case、`BackupService` prune 策略 + snapshot/restore 端到端、`RecurrenceService` 推进、`AppStore` CRUD 与关系重建、`markEntryDone` 克隆逻辑、`AppLogger` 文件滚动（含滚动链路 / 边界 maxBytes=0 / keepCount=1）。核心数据层覆盖率 ≈ 70-100%（Migrator/RecordQueries/Recurrence/RecurrenceService/AppStore/Records），View 层不测。
+
+## 数据目录布局
+
+app 同级三个目录，整包可携带 / 备份：
+
+| 目录 | 内容 |
+|---|---|
+| `db/` | `db.sqlite`（主库）+ WAL；`db.fallback.sqlite`（兜底）；`corrupted/<ISO>/`（损坏归档，保留最近 5 个） |
+| `dbbackup/` | `boot-*.json`（启动快照，同日去重，保留 10 份）、`weekly-<ISO>-<weekKey>.json`（每周一份，月清理 + 硬上限 12 份）、`manual-*.json`、`pre-import-*.json`、`salvage-*.json` |
+| `logs/` | `app.log`（1 MB 自动滚动，保留 5 份）+ `.swiftdata_warned`（旧 SwiftData 库告警去重标志） |
 
 ## 使用
 
 1. 启动后菜单栏出现 ✅ checklist 图标，点击弹出今日面板。
 2. 在面板里快速添加完成 / 计划 / 问题，选标签、优先级、是否周期。
 3. 点「打开主窗口」查看概要、时间线、会议纪要、周报，或打开设置调整提醒 / 外观 / 开机自启 / 数据导入导出。
-4. 数据本地保存（SwiftData，`~/Library/Application Support/default.store`），重启不丢失。
+4. 数据本地保存在 `<appDir>/db/db.sqlite`（GRDB），重启不丢失。
 
 ## 技术栈
 
 - Swift 6 + SwiftUI（原生 macOS 14+）
-- SwiftData（`@Model` 本地持久化，轻量迁移）
+- GRDB.swift 6.29+（`db.sqlite` + WAL，三级容错链路）
 - UserNotifications（每日提醒）
 - ServiceManagement（开机自启，`SMAppService`）
 - SwiftPM 构建 + 脚本打包成 `.app`（ad-hoc 签名）
@@ -63,12 +81,14 @@ rm -rf DailyReport.app
 
 ```
 Sources/DailyReport/
-├── DailyReportApp.swift    # @main: MenuBarExtra + 主窗口 + 启动 sweep
+├── DailyReportApp.swift    # @main: MenuBarExtra + 主窗口 + 启动 sweep/backup
 ├── AppState.swift          # 常量与 UserDefaults 键
-├── Models/                 # SwiftData 模型（WorkEntry / Meeting / Tag …）
+├── Database/               # GRDB 持久层：Records/Migrator/AppDatabase/AppStore/RecordQueries/Environment
+├── Models/                 # 纯数据/枚举（Recurrence、WorkKind 等）
 ├── Views/                  # 概要 / 时间线 / 待办 / 会议 / 周报 / 设置
 ├── Components/             # 复用组件（标签选择、KindPicker、RecurrenceEditor…）
-└── Services/               # 导出 / 备份 / 周期推进 / 提醒
-scripts/build-app.sh        # 构建 + 打包
+└── Services/               # 备份 / 导出 / 周期推进 / 提醒 / 日志
+Tests/DailyReportTests/      # 核心算法单测（BackupService prune、Recurrence、sweep）
+scripts/build-app.sh         # 构建 + 打包
 Resources/Info.plist.template
 ```

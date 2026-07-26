@@ -1,16 +1,31 @@
 import SwiftUI
-import SwiftData
 
 /// 概要：今日记录聚合
 struct TodayView: View {
-    @Environment(\.modelContext) private var context
-    @State private var report: DailyReport?
-    @State private var selectedTag: Tag?
-    @State private var pendingDeleteEntry: WorkEntry?
-    @Query(sort: \WorkEntry.timestamp, order: .reverse) private var allEntries: [WorkEntry]
-    @Query(sort: \Meeting.timestamp, order: .reverse) private var allMeetings: [Meeting]
+    @Environment(\.appStore) private var store
+    @State private var report: DailyReportRecord?
+    @State private var loadFailed = false
+    @State private var selectedTag: TagRecord?
+    @State private var pendingDeleteEntry: WorkEntryRecord?
+    /// 写失败反馈：删除/标记完成走 throw-aware 入口，避免 store?.run 吞 throws 后 UI 假成功
+    @State private var writeError: String?
 
-    private func todayEntries(for report: DailyReport) -> [WorkEntry] {
+    /// 跨午夜刷新锚点：与 MenuPanelView/HistoryView 同模式。长时间挂着 TodayView 不切 tab，
+    /// 00:00 后 Date().startOfDay 已是第二天但 @State 没变 → 标题日期与 plannedListBase 错位。
+    /// 60s Timer 兜底覆盖分钟边界；NSCalendarDayChanged 处理系统日历切换即时事件
+    @State private var nowTick: Date = Date()
+
+    private var allEntries: [WorkEntryRecord] { store?.entries ?? [] }
+    private var allMeetings: [MeetingRecord] { store?.meetings ?? [] }
+
+    /// 统一写入口：失败时弹 alert 反馈给用户（与 WorkEntryCard/HistoryView 同模式）
+    private func write(_ block: (AppStore) throws -> Void) {
+        guard let store else { return }
+        do { try block(store) }
+        catch { writeError = error.localizedDescription }
+    }
+
+    private func todayEntries(for report: DailyReportRecord) -> [WorkEntryRecord] {
         let start = report.date
         let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
         return allEntries.filter { e in
@@ -33,27 +48,28 @@ struct TodayView: View {
     }
 
     /// 今日全部会议（含即将开始的周期性会议），按时间升序
-    private func todayMeetings(for report: DailyReport) -> [Meeting] {
+    private func todayMeetings(for report: DailyReportRecord) -> [MeetingRecord] {
         let start = report.date
         let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
         return allMeetings.filter { $0.timestamp >= start && $0.timestamp < end }
             .sorted { $0.timestamp < $1.timestamp }
     }
 
-    /// 计划列表（排除「今日计划」，避免与今日记录·计划组重复）
-    /// 计划列表的候选（非今日计划任务），不依赖 selectedTag，用于标签栏 & 筛选
-    private var plannedListBase: [WorkEntry] {
-        let start = Date().startOfDay
+    /// 计划列表的候选（非今日计划任务）。用 nowTick.startOfDay 锚点（与 todayEntries 的 report.date 同步刷新）
+    private var plannedListBase: [WorkEntryRecord] {
+        let start = nowTick.startOfDay
         let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
         return allEntries.filter { e in
             e.kind == .planned && !Self.isTodayPlanned(e, start: start, end: end)
         }
     }
 
-    private var plannedList: [WorkEntry] {
+    private var plannedList: [WorkEntryRecord] {
         let base = plannedListBase
         let filtered = selectedTag.map { sel in
-            base.filter { $0.tags.contains(where: { $0.id == sel.id }) }
+            base.filter { e in
+                (store?.tagsByEntry[e.id] ?? []).contains { $0.id == sel.id }
+            }
         } ?? base
         return filtered.sorted { lhs, rhs in
             if lhs.priority.sortOrder != rhs.priority.sortOrder {
@@ -66,49 +82,57 @@ struct TodayView: View {
     }
 
     /// 是否属于「今日计划」（与 todayEntries 的 planned 判定一致）
-    private static func isTodayPlanned(_ e: WorkEntry, start: Date, end: Date) -> Bool {
+    private static func isTodayPlanned(_ e: WorkEntryRecord, start: Date, end: Date) -> Bool {
         if let f = e.finishDate {
             return Calendar.current.startOfDay(for: f) <= start
         }
         return e.timestamp >= start && e.timestamp < end
     }
 
+    /// alert message 文案。抽成 static helper 让 type-checker 不用穿透整个 body 推断类型
+    private static func deleteMessage(_ entry: WorkEntryRecord?) -> String {
+        entry.map { "「\($0.title)」将被删除。" } ?? ""
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 if let report {
-                    @Bindable var report = report
                     let entries = todayEntries(for: report)
                     let meetings = todayMeetings(for: report)
-                    let usedTags: [Tag] = {
-                        var seen = Set<UUID>(); var out: [Tag] = []
+                    let usedTags: [TagRecord] = {
+                        var seen = Set<UUID>(); var out: [TagRecord] = []
                         for e in entries {
-                            for t in e.tags where !seen.contains(t.id) {
+                            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
                                 seen.insert(t.id); out.append(t)
                             }
                         }
                         for m in meetings {
-                            for t in m.tags where !seen.contains(t.id) {
+                            for t in (store?.tagsByMeeting[m.id] ?? []) where !seen.contains(t.id) {
                                 seen.insert(t.id); out.append(t)
                             }
                         }
                         for e in plannedListBase {
-                            for t in e.tags where !seen.contains(t.id) {
+                            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
                                 seen.insert(t.id); out.append(t)
                             }
                         }
                         return out
                     }()
                     let filteredEntries = selectedTag.map { sel in
-                        entries.filter { $0.tags.contains(where: { $0.id == sel.id }) }
+                        entries.filter { e in
+                            (store?.tagsByEntry[e.id] ?? []).contains { $0.id == sel.id }
+                        }
                     } ?? entries
                     let filteredMeetings = selectedTag.map { sel in
-                        meetings.filter { $0.tags.contains(where: { $0.id == sel.id }) }
+                        meetings.filter { m in
+                            (store?.tagsByMeeting[m.id] ?? []).contains { $0.id == sel.id }
+                        }
                     } ?? meetings
                     VStack(alignment: .leading, spacing: 20) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("概要").font(.largeTitle).bold()
-                            Text(Date().friendlyDay).foregroundStyle(.secondary)
+                            Text(nowTick.friendlyDay).foregroundStyle(.secondary)
                         }
 
                         statBar(entries: filteredEntries, meetings: filteredMeetings)
@@ -165,6 +189,21 @@ struct TodayView: View {
                     }
                     .padding(28)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                } else if loadFailed {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.largeTitle)
+                            .foregroundStyle(.orange)
+                        Text("日报加载失败").font(.headline)
+                        Text("数据库可能异常，可从设置页恢复最近的自动备份。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                        Button("重试") { Task { await loadReport() } }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 200)
                 } else {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 200)
                 }
@@ -175,24 +214,59 @@ struct TodayView: View {
                 set: { if !$0 { pendingDeleteEntry = nil } }
             )) {
                 Button("删除", role: .destructive) {
-                    if let e = pendingDeleteEntry { context.delete(e) }
+                    if let e = pendingDeleteEntry { write { try $0.deleteEntry(e.id) } }
                     pendingDeleteEntry = nil
                 }
                 Button("取消", role: .cancel) { pendingDeleteEntry = nil }
             } message: {
-                Text(pendingDeleteEntry.map { "「\($0.title)」将被删除。" } ?? "")
+                Text(Self.deleteMessage(pendingDeleteEntry))
+            }
+            .alert("写入失败", isPresented: Binding(
+                get: { writeError != nil },
+                set: { if !$0 { writeError = nil } }
+            )) {
+                Button("好", role: .cancel) { writeError = nil }
+            } message: {
+                Text(writeError ?? "")
             }
         }
-        .task { report = DailyReport.getOrCreate(for: Date(), in: context) }
+        .task { await loadReport() }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            nowTick = Date()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            // 跨午夜后：今天的 report 可能尚未创建，或本地缓存的还是昨天的；重新拉取
+            nowTick = Date()
+            report = nil
+            Task { await loadReport() }
+        }
+        // 标签被外部删除时，selectedTag 失效要立即自清，避免计划列表/标签筛选静默归零
+        // 用 [UUID] 而非 [TagRecord]：onChange 需要 Equatable，UUID 满足而 TagRecord 没法 conform
+        .onChange(of: store?.tags.map(\.id) ?? []) { _, newIds in
+            if let t = selectedTag, !newIds.contains(t.id) {
+                selectedTag = nil
+            }
+        }
+    }
+
+    private func loadReport() async {
+        guard let store else { return }
+        do {
+            report = try store.getOrCreateReport(for: Date())
+            loadFailed = false
+        } catch {
+            AppLogger.error("TodayView 加载日报失败：\(error)")
+            loadFailed = true
+        }
     }
 
     @ViewBuilder
-    private func plannedRow(_ e: WorkEntry) -> some View {
+    private func plannedRow(_ e: WorkEntryRecord) -> some View {
         let p = e.priority
         let dateText = (e.finishDate ?? e.timestamp).friendlyDate
         HStack(alignment: .center, spacing: 8) {
             Button {
-                RecurrenceService.markDone(e, in: context)
+                write { try _ = $0.markEntryDone(e.id) }
             } label: {
                 Image(systemName: e.isOverdue ? "exclamationmark.circle" : "circle")
                     .foregroundStyle(e.isOverdue ? .red : .secondary)
@@ -233,14 +307,14 @@ struct TodayView: View {
         }
         .contentShape(Rectangle())
         .contextMenu {
-            Button("标记完成") { RecurrenceService.markDone(e, in: context) }
+            Button("标记完成") { write { try _ = $0.markEntryDone(e.id) } }
             Divider()
             Button("删除", role: .destructive) { pendingDeleteEntry = e }
         }
     }
 
     /// 统计概览条：完成/计划/问题/会议 计数 + 完成率（跟随当前标签筛选）
-    private func statBar(entries: [WorkEntry], meetings: [Meeting]) -> some View {
+    private func statBar(entries: [WorkEntryRecord], meetings: [MeetingRecord]) -> some View {
         let done = entries.filter { $0.kind == .done }.count
         let planned = entries.filter { $0.kind == .planned }.count
         let blocker = entries.filter { $0.kind == .blocker }.count
@@ -272,62 +346,11 @@ struct TodayView: View {
     }
 
     @ViewBuilder
-    private func todayMeetingRow(_ m: Meeting) -> some View {
-        @Bindable var m = m
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "person.3.fill")
-                    .foregroundStyle(.purple)
-                    .font(.caption)
-                Text(m.topic).font(.body.weight(.semibold))
-                if m.isRecurring {
-                    Label(m.recurrenceLabel, systemImage: "repeat")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Color.purple.opacity(0.15))
-                        .foregroundStyle(.purple)
-                        .clipShape(Capsule())
-                }
-                Spacer(minLength: 0)
-                Text(m.timestamp.formatted(date: .omitted, time: .shortened))
-                    .font(.caption2).foregroundStyle(.tertiary)
-            }
-            ZStack(alignment: .topLeading) {
-                if m.summary.isEmpty {
-                    Text("点这里写会议概要…")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 5)
-                        .allowsHitTesting(false)
-                }
-                TextEditor(text: $m.summary)
-                    .font(.caption)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 28, alignment: .top)
-                    .padding(.horizontal, 2)
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
-            }
-            if !m.tags.isEmpty {
-                HStack(spacing: 3) {
-                    ForEach(m.tags) { tag in
-                        Text(tag.name)
-                            .font(.caption2)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(tag.swiftUIColor.opacity(0.2))
-                            .clipShape(Capsule())
-                    }
-                }
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.2), lineWidth: 1))
+    private func todayMeetingRow(_ m: MeetingRecord) -> some View {
+        TodayMeetingRow(meeting: m)
     }
 
-    private func tagFilterBar(_ tags: [Tag]) -> some View {
+    private func tagFilterBar(_ tags: [TagRecord]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 chip("全部", color: .secondary, isSelected: selectedTag == nil) {
@@ -353,5 +376,134 @@ struct TodayView: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// 今日会议行（独立子视图，承载 summary 内联编辑的本地 @State 草稿）
+private struct TodayMeetingRow: View {
+    @Environment(\.appStore) private var store
+    let meeting: MeetingRecord
+    @State private var summaryDraft: String = ""
+    @State private var loaded = false
+    @State private var debounceTask: Task<Void, Never>?
+    /// 写失败反馈：flushSummary 走 throw-aware 入口，避免 store?.run 吞 throws 后概要静默丢字
+    @State private var writeError: String?
+
+    private var tags: [TagRecord] { store?.tagsByMeeting[meeting.id] ?? [] }
+
+    /// 统一写入口：失败时弹 alert 反馈（与 WorkEntryCard/MeetingCard 同模式）
+    private func write(_ block: (AppStore) throws -> Void) {
+        guard let store else { return }
+        do { try block(store) }
+        catch { writeError = error.localizedDescription }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "person.3.fill")
+                    .foregroundStyle(.purple)
+                    .font(.caption)
+                Text(meeting.topic).font(.body.weight(.semibold))
+                if meeting.isRecurring {
+                    Label(meeting.recurrenceLabel, systemImage: "repeat")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.purple.opacity(0.15))
+                        .foregroundStyle(.purple)
+                        .clipShape(Capsule())
+                }
+                Spacer(minLength: 0)
+                Text(meeting.timestamp.formatted(date: .omitted, time: .shortened))
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            ZStack(alignment: .topLeading) {
+                if summaryDraft.isEmpty {
+                    Text("点这里写会议概要…")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 5)
+                        .allowsHitTesting(false)
+                }
+                summaryEditor
+            }
+            if !tags.isEmpty {
+                HStack(spacing: 3) {
+                    ForEach(tags) { tag in
+                        Text(tag.name)
+                            .font(.caption2)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(tag.swiftUIColor.opacity(0.2))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.2), lineWidth: 1))
+        .alert("写入失败", isPresented: Binding(
+            get: { writeError != nil },
+            set: { if !$0 { writeError = nil } }
+        )) {
+            Button("好", role: .cancel) { writeError = nil }
+        } message: {
+            Text(writeError ?? "")
+        }
+    }
+
+    /// onChange 回调：手动 debounce 0.3s（macOS 14 没有 .onChange(debounce:)，macOS 15+ 才支持）
+    /// 每次 summaryDraft 变化取消上一个未触发的 Task，重新计时；onDisappear 兜底立即 flush
+    private func scheduleFlush() {
+        debounceTask?.cancel()
+        debounceTask = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            flushSummary()
+        }
+    }
+
+    /// 真正执行写回
+    private func flushSummary() {
+        guard loaded, summaryDraft != meeting.summary else { return }
+        write { try $0.updateMeeting(meeting.id) { $0.summary = summaryDraft } }
+        debounceTask = nil
+    }
+
+    /// 把 TextEditor + 三段写回逻辑抽成独立 view，避免 TodayMeetingRow 整体表达式过深触 type-check 超时
+    @ViewBuilder
+    private var summaryEditor: some View {
+        TextEditor(text: $summaryDraft)
+            .font(.caption)
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: 28, alignment: .top)
+            .padding(.horizontal, 2)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+            .onChange(of: summaryDraft) { _, _ in scheduleFlush() }
+            .onAppear {
+                if !loaded {
+                    summaryDraft = meeting.summary
+                    loaded = true
+                }
+            }
+            .onDisappear {
+                debounceTask?.cancel()
+                flushSummary()
+            }
+            // 视图被 ForEach 复用到另一条会议时（id 变了）：丢弃草稿，下次 onAppear 重载
+            .onChange(of: meeting.id) { _, _ in
+                debounceTask?.cancel()
+                debounceTask = nil
+                summaryDraft = ""
+                loaded = false
+            }
+            // 外部更新（如 MeetingFormView 保存）同步到草稿：用户未在编辑时才覆盖
+            .onChange(of: meeting.summary) { _, newValue in
+                guard loaded, debounceTask == nil else { return }
+                summaryDraft = newValue
+            }
     }
 }

@@ -9,37 +9,39 @@ final class ExportService {
 
     struct DayData {
         let day: Date
-        let entries: [WorkEntry]
-        let report: DailyReport?
+        let entries: [WorkEntryRecord]
+        let report: DailyReportRecord?
+        let tagsByEntry: [UUID: [TagRecord]]
     }
 
     // MARK: Markdown
-    func exportDay(_ data: DayData) {
+    /// 用户取消保存面板时静默返回（非错误）；写盘失败时抛错给调用方
+    func exportDay(_ data: DayData) throws {
         let md = markdownForDay(data)
-        save(filename: "日报-\(data.day.isoDay).md", content: md)
+        try save(filename: "日报-\(data.day.isoDay).md", content: md)
     }
 
-    func exportWeek(_ days: [DayData], title: String, filename: String) {
+    func exportWeek(_ days: [DayData], title: String, filename: String) throws {
         var s = "# \(title)\n\n"
         for d in days {
             s += markdownForDay(d)
             s += "---\n\n"
         }
-        save(filename: filename, content: s)
+        try save(filename: filename, content: s)
     }
 
     /// 周报 XLSX：仅「完成」任务，按实际完成日（归属日）排序、带「星期」列
-    func exportWeekDoneXLSX(_ entries: [WorkEntry], title: String) {
+    func exportWeekDoneXLSX(_ entries: [WorkEntryRecord], title: String) throws {
         let done = entries.filter { $0.kind == .done }
             .sorted { ($0.finishDate ?? $0.timestamp) < ($1.finishDate ?? $1.timestamp) }
         let rows = done.map { e -> [String] in
             let belong = e.finishDate ?? e.timestamp
             return [Self.weekdayName(belong), belong.isoDay, e.title, e.detail]
         }
-        writeXLSX(filename: "\(sanitizeFilename(title)).xlsx",
-                  sheetName: sanitizeSheetName(title),
-                  header: ["星期", "日期", "标题", "详情"],
-                  rows: rows)
+        try writeXLSX(filename: "\(sanitizeFilename(title)).xlsx",
+                      sheetName: sanitizeSheetName(title),
+                      header: ["星期", "日期", "标题", "详情"],
+                      rows: rows)
     }
 
     /// 中文星期名（Calendar weekday：1=周日 … 7=周六）
@@ -52,26 +54,26 @@ final class ExportService {
 
     // MARK: XLSX
     /// 全部任务 XLSX：字段 日期/时间/标题/分类/详情/标签
-    func exportEntriesXLSX(_ entries: [WorkEntry]) {
+    func exportEntriesXLSX(_ entries: [WorkEntryRecord], tagsByEntry: [UUID: [TagRecord]]) throws {
         let rows = entries.sorted(by: { $0.timestamp < $1.timestamp }).map { e in
-            let tags = e.tags.map(\.name).joined(separator: "/")
+            let tags = (tagsByEntry[e.id] ?? []).map(\.name).joined(separator: "/")
             return [e.day.isoDay, e.timestamp.shortTime, e.title, e.kind.rawValue, e.detail, tags]
         }
-        writeXLSX(filename: "任务-\(Date().isoDay).xlsx",
-                  sheetName: "全部任务",
-                  header: ["日期", "时间", "标题", "分类", "详情", "标签"],
-                  rows: rows)
+        try writeXLSX(filename: "任务-\(Date().isoDay).xlsx",
+                      sheetName: "全部任务",
+                      header: ["日期", "时间", "标题", "分类", "详情", "标签"],
+                      rows: rows)
     }
 
-    func exportTodosCSV(_ todos: [TodoItem]) {
+    func exportTodosCSV(_ todos: [TodoItemRecord], tagsByTodo: [UUID: [TagRecord]]) throws {
         var csv = "标题,是否完成,截止日期,创建时间,完成时间,标签\n"
         for t in todos {
             let due = t.dueDate.map { $0.isoDay } ?? ""
             let done = t.completedAt.map { $0.isoDay } ?? ""
-            let tags = t.tags.map(\.name).joined(separator: "/")
+            let tags = (tagsByTodo[t.id] ?? []).map(\.name).joined(separator: "/")
             csv += "\(csvEscape(t.title)),\(t.isDone ? "是" : "否"),\(due),\(t.createdAt.isoDay),\(done),\(csvEscape(tags))\n"
         }
-        save(filename: "待办-\(Date().isoDay).csv", content: csv)
+        try save(filename: "待办-\(Date().isoDay).csv", content: csv)
     }
 
     // MARK: - helpers
@@ -86,8 +88,9 @@ final class ExportService {
             if group.isEmpty { continue }
             s += "### \(kind.icon.emoji) \(kind.rawValue)\n\n"
             for e in group {
+                let tags = data.tagsByEntry[e.id] ?? []
                 var line = "- \(e.title)"
-                if !e.tags.isEmpty { line += " · " + e.tags.map { "`\($0.name)`" }.joined(separator: " ") }
+                if !tags.isEmpty { line += " · " + tags.map { "`\($0.name)`" }.joined(separator: " ") }
                 s += line + "\n"
                 if !e.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     s += "    \(e.detail)\n"
@@ -126,7 +129,8 @@ final class ExportService {
         return name.trimmingCharacters(in: .whitespaces)
     }
 
-    private func save(filename: String, content: String) {
+    /// 用户取消保存面板：静默返回（不抛错）；写盘失败：抛错给调用方弹 alert
+    private func save(filename: String, content: String) throws {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = filename
         panel.canCreateDirectories = true
@@ -135,12 +139,13 @@ final class ExportService {
             try content.write(to: url, atomically: true, encoding: .utf8)
             NSSound.beep()
         } catch {
-            NSSound.beep()
+            AppLogger.error("导出写盘失败（filename=\(filename)）：\(error)")
+            throw error
         }
     }
 
     /// 通用 XLSX 写入：表头 + 行
-    private func writeXLSX(filename: String, sheetName: String, header: [String], rows: [[String]]) {
+    private func writeXLSX(filename: String, sheetName: String, header: [String], rows: [[String]]) throws {
         var all: [[String]] = [header]
         all.append(contentsOf: rows)
         let data = XLSXWriter(sheetName: sheetName, rows: all).data()
@@ -152,7 +157,8 @@ final class ExportService {
             try data.write(to: url, options: .atomic)
             NSSound.beep()
         } catch {
-            NSSound.beep()
+            AppLogger.error("XLSX 写盘失败（filename=\(filename)）：\(error)")
+            throw error
         }
     }
 }

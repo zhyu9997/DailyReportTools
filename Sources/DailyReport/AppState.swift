@@ -6,12 +6,40 @@ enum AppState {
     /// 主窗口 scene 标识
     static let mainWindowID = "main-window"
 
+    /// bundle 前缀：UserDefaults.standard 在 macOS 上是按用户全局共享的（不像 iOS 有 app group 隔离），
+    /// 任何同机器进程都能读写。加 bundle 前缀避免与其它工具用同名 key（appearance/selectedTab 等）撞车
+    private static let keyPrefix = "com.zhyu.dailyreport."
+
     /// UserDefaults 键
     enum Key {
-        static let reminderEnabled = "reminderEnabled"
-        static let reminderHour = "reminderHour"
-        static let reminderMinute = "reminderMinute"
-        static let appearance = "appearance" // AppearanceMode.rawValue
+        static let reminderEnabled = "\(AppState.keyPrefix)reminderEnabled"
+        static let reminderHour = "\(AppState.keyPrefix)reminderHour"
+        static let reminderMinute = "\(AppState.keyPrefix)reminderMinute"
+        static let appearance = "\(AppState.keyPrefix)appearance" // AppearanceMode.rawValue
+        static let selectedTab = "\(AppState.keyPrefix)selectedTab" // MainTabView 最后活跃 tab
+
+        /// 启动期一次性迁移：把 R7 之前的裸 key 拷到带前缀的新 key（如新 key 尚未写过）
+        /// 在 @AppStorage 第一次读之前调用（DailyReportApp.init 阶段）
+        static func migrateLegacyKeysIfNeeded() {
+            let pairs: [(legacy: String, new: String)] = [
+                ("reminderEnabled", reminderEnabled),
+                ("reminderHour",    reminderHour),
+                ("reminderMinute",  reminderMinute),
+                ("appearance",      appearance),
+                ("selectedTab",     selectedTab),
+            ]
+            let ud = UserDefaults.standard
+            for p in pairs {
+                // 新 key 已存在 → 已迁移过，跳过（不覆盖用户后续在新 key 上的修改）
+                if ud.object(forKey: p.new) != nil { continue }
+                // 老 key 也没值 → 没什么可迁移
+                guard ud.object(forKey: p.legacy) != nil else { continue }
+                // 拷值保类型（Bool / Int / Double / String / Data / Array / Dict 都走 set:forKey:）
+                ud.set(ud.object(forKey: p.legacy), forKey: p.new)
+                AppLogger.info("UserDefaults 迁移：\(p.legacy) → \(p.new)")
+            }
+            // 不立即删老 key：保留 7 天回滚窗口；下次 release 再清理（避免误删用户其它工具的同名值）
+        }
     }
 
     static let defaultReminderHour = 18

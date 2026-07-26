@@ -1,0 +1,238 @@
+import Testing
+import Foundation
+@testable import DailyReport
+
+/// Recurrence.nextFutureDate 边缘 case 覆盖
+@Suite struct RecurrenceTests {
+
+    private static let cal: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        return c
+    }()
+
+    // MARK: - Daily
+
+    @Test func dailyAdvancesFromPastToFuture() {
+        let base = Self.makeDate(2024, 1, 1, 9, 0)
+        let now = Self.makeDate(2026, 7, 26, 12, 0)
+        let next = Recurrence.nextFutureDate(unit: .daily, interval: 1, weekdays: [], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        #expect(next! > now)
+        let diff = next!.timeIntervalSince(now)
+        #expect(diff < 2 * 86400)
+    }
+
+    @Test func dailyIntervalTwoSkips() {
+        let base = Self.makeDate(2024, 1, 1, 9, 0)
+        let now = Self.makeDate(2026, 7, 26, 12, 0)
+        let next = Recurrence.nextFutureDate(unit: .daily, interval: 2, weekdays: [], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        #expect(next! > now)
+    }
+
+    /// 远期 base：2 年前。验证 O(1) 跳大段不依赖逐日循环（结果正确即可）。
+    /// 之前实现是逐日 +1 天，2 年差距需要 ~730 次循环；现在一次性跳过整段后尾部微调。
+    @Test func dailyDistantPastBaseJumpsInO1() {
+        let base = Self.makeDate(2024, 1, 1, 9, 0)
+        let now = Self.makeDate(2026, 7, 26, 12, 0)   // ~937 天之后
+        let next = Recurrence.nextFutureDate(unit: .daily, interval: 1, weekdays: [], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        #expect(next! > now)
+        // 步长 1 天：next 一定是明天 9:00（now 是 12:00，已过今天 9:00）
+        let comps = Self.cal.dateComponents([.year, .month, .day, .hour], from: next!)
+        #expect(comps.year == 2026)
+        #expect(comps.month == 7)
+        #expect(comps.day == 27)
+        #expect(comps.hour == 9)
+    }
+
+    // MARK: - Weekly
+
+    @Test func weeklyPicksNextMatchingWeekday() {
+        // 周三 12:00，base 一周前，目标 weekday 2(Mon)/6(Fri)
+        let now = Self.makeDate(2026, 7, 22, 12, 0)
+        let base = now.addingTimeInterval(-7 * 86400)
+        let next = Recurrence.nextFutureDate(unit: .weekly, interval: 1, weekdays: [2, 6], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let wd = Self.cal.component(.weekday, from: next!)
+        #expect(wd == 2 || wd == 6)
+        #expect(next! > now)
+    }
+
+    @Test func weeklyEmptyWeekdaysReturnsNil() {
+        let now = Date()
+        let next = Recurrence.nextFutureDate(unit: .weekly, interval: 1, weekdays: [], monthDays: [],
+                                              after: now, now: now)
+        #expect(next == nil)
+    }
+
+    @Test func weeklySkipsTodayIfTimePassed() {
+        // 周一 18:00 → base 时分 09:00 已过，应推到下周一
+        let now = Self.makeDate(2026, 7, 20, 18, 0)
+        let base = Self.makeDate(2026, 7, 13, 9, 0)
+        let next = Recurrence.nextFutureDate(unit: .weekly, interval: 1, weekdays: [2], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        #expect(next! > now)
+        #expect(Self.cal.component(.weekday, from: next!) == 2)
+    }
+
+    /// interval=2（每 2 周一次）：base 是匹配 weekday 的锚点，next 应在 base + 14 天
+    /// 老实现完全忽略 interval 会返回 base + 7 天（每周），暴露 bug
+    @Test func weeklyIntervalTwoSkipsAlternatingWeek() {
+        // base = 周一 7/13 9:00，now = 周三 7/15 12:00（已过本周一）
+        // 每两周周一：next 应为 7/27（base + 14d），而非 7/20（base + 7d）
+        let base = Self.makeDate(2026, 7, 13, 9, 0)   // Monday
+        let now = Self.makeDate(2026, 7, 15, 12, 0)
+        let next = Recurrence.nextFutureDate(unit: .weekly, interval: 2, weekdays: [2], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let expected = Self.makeDate(2026, 7, 27, 9, 0)
+        #expect(next == expected)
+    }
+
+    /// interval=2 且当前正处在「匹配周」的剩余时间里：仍应跳到下个匹配日
+    @Test func weeklyIntervalTwoInMatchWeekAfterTime() {
+        // base = 周一 7/13 9:00，now = 周一 7/27 18:00（已是下个匹配周，但 9:00 过了）
+        // 应推到 8/10（再下一个匹配周的周一）
+        let base = Self.makeDate(2026, 7, 13, 9, 0)
+        let now = Self.makeDate(2026, 7, 27, 18, 0)
+        let next = Recurrence.nextFutureDate(unit: .weekly, interval: 2, weekdays: [2], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let expected = Self.makeDate(2026, 8, 10, 9, 0)
+        #expect(next == expected)
+    }
+
+    // MARK: - Monthly
+
+    @Test func monthlyPicksNextMonthDay() {
+        let now = Self.makeDate(2026, 7, 26, 12, 0)
+        let base = Self.makeDate(2026, 1, 1, 9, 0)
+        let next = Recurrence.nextFutureDate(unit: .monthly, interval: 1, weekdays: [], monthDays: [1, 15],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let day = Self.cal.component(.day, from: next!)
+        #expect(day == 1 || day == 15)
+        #expect(next! > now)
+    }
+
+    @Test func monthlyEmptyMonthDaysReturnsNil() {
+        let now = Date()
+        let next = Recurrence.nextFutureDate(unit: .monthly, interval: 1, weekdays: [], monthDays: [],
+                                              after: now, now: now)
+        #expect(next == nil)
+    }
+
+    @Test func monthlyCrossYear() {
+        // 12/25 → 目标 15 号 → 应推到 2027/1/15
+        let now = Self.makeDate(2026, 12, 25, 12, 0)
+        let base = Self.makeDate(2026, 12, 15, 9, 0)
+        let next = Recurrence.nextFutureDate(unit: .monthly, interval: 1, weekdays: [], monthDays: [15],
+                                              after: base, now: now)
+        #expect(next != nil)
+        #expect(Self.cal.component(.year, from: next!) == 2027)
+        #expect(Self.cal.component(.month, from: next!) == 1)
+    }
+
+    /// interval=2（每 2 个月一次）：跳过非匹配月
+    /// base = 2026/1/15，目标 15 日，每 2 个月 → 允许月：1/3/5/7/9/11
+    /// now = 2026/4/10 → 5/15（非 4/15，4 月不在允许集）
+    @Test func monthlyIntervalTwoSkipsAlternatingMonth() {
+        let base = Self.makeDate(2026, 1, 15, 9, 0)
+        let now = Self.makeDate(2026, 4, 10, 12, 0)
+        let next = Recurrence.nextFutureDate(unit: .monthly, interval: 2, weekdays: [], monthDays: [15],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let expected = Self.makeDate(2026, 5, 15, 9, 0)
+        #expect(next == expected)
+    }
+
+    /// monthDays:[31] 在 2 月（无 31 号）：应跳到 3/31，而不是 cal.date(from:) 返回 nil 后静默停滞
+    /// 关键：遍历 days 时 day=31 在 2 月 c.date(from:) 会返回 nil，必须能跳过该候选
+    @Test func monthlyDay31InFebruarySkipsToMarch() {
+        let base = Self.makeDate(2026, 1, 31, 9, 0)
+        let now = Self.makeDate(2026, 2, 10, 12, 0)
+        let next = Recurrence.nextFutureDate(unit: .monthly, interval: 1, weekdays: [], monthDays: [31],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let expected = Self.makeDate(2026, 3, 31, 9, 0)
+        #expect(next == expected)
+    }
+
+    /// 闰年边界：base 2024-02-29（闰年），现在已是 2026-03-01
+    /// monthDays:[29]，2026-02 没有 29 号（平年），应跳到 2026-03-29
+    /// 验证 monthDiff 跨年算式（(2026-2024)*12 + (3-2) = 26）+ 平年 2 月跳过
+    @Test func monthlyLeapYearBoundary() {
+        let base = Self.makeDate(2024, 2, 29, 9, 0)
+        let now = Self.makeDate(2026, 3, 1, 12, 0)
+        let next = Recurrence.nextFutureDate(unit: .monthly, interval: 1, weekdays: [], monthDays: [29],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let expected = Self.makeDate(2026, 3, 29, 9, 0)
+        #expect(next == expected)
+    }
+
+    /// 跨年 interval=1 算式回归：base=2026/12/15, now=2027/2/1, day=15 → 2027/2/15
+    /// 验证 monthDiff = (2027-2026)*12 + (2-12) = 14 计算正确（曾经是 force-unwrap，回归用）
+    @Test func monthlyCrossYearIntervalOne() {
+        let base = Self.makeDate(2026, 12, 15, 9, 0)
+        let now = Self.makeDate(2027, 2, 1, 12, 0)
+        let next = Recurrence.nextFutureDate(unit: .monthly, interval: 1, weekdays: [], monthDays: [15],
+                                              after: base, now: now)
+        #expect(next != nil)
+        let expected = Self.makeDate(2027, 2, 15, 9, 0)
+        #expect(next == expected)
+    }
+
+    // MARK: - Base in future
+
+    @Test func dailyBaseInFutureReturnsBase() {
+        // base 在未来：daily 应直接返回 base，不应推进
+        let base = Self.makeDate(2026, 7, 26, 9, 0)
+        let now = Self.makeDate(2026, 7, 26, 8, 0)   // base 前 1 小时
+        let next = Recurrence.nextFutureDate(unit: .daily, interval: 1, weekdays: [], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        #expect(next! == base)
+    }
+
+    // MARK: - Label
+
+    @Test func labelDaily() {
+        #expect(Recurrence.label(unit: .daily, interval: 1, weekdays: [], monthDays: []) == "每天")
+        #expect(Recurrence.label(unit: .daily, interval: 3, weekdays: [], monthDays: []) == "每3天")
+    }
+
+    @Test func labelWeekly() {
+        // weekday: 2=周一, 4=周三, 6=周五
+        let label = Recurrence.label(unit: .weekly, interval: 1, weekdays: [2, 4, 6], monthDays: [])
+        #expect(label == "每周一三五")
+    }
+
+    @Test func labelWeeklyInterval() {
+        let label = Recurrence.label(unit: .weekly, interval: 2, weekdays: [2], monthDays: [])
+        #expect(label == "每2周一")
+    }
+
+    @Test func labelMonthly() {
+        let label = Recurrence.label(unit: .monthly, interval: 1, weekdays: [], monthDays: [1, 15])
+        #expect(label == "每月1日、15日")
+    }
+
+    @Test func labelMonthlyInterval() {
+        let label = Recurrence.label(unit: .monthly, interval: 3, weekdays: [], monthDays: [15])
+        #expect(label == "每3月15日")
+    }
+
+    // MARK: - Helpers
+
+    private static func makeDate(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int) -> Date {
+        cal.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
+    }
+}

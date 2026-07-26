@@ -6,20 +6,20 @@ struct MainTabView: View {
     var body: some View {
         TabView(selection: $coordinator.selectedTab) {
             TodayView()
-                .tabItem { Label("概要", systemImage: "sun.max.fill") }
-                .tag(0)
+                .tabItem { Label(AppTab.today.title, systemImage: AppTab.today.systemImage) }
+                .tag(AppTab.today.rawValue)
 
             HistoryView()
-                .tabItem { Label("时间线", systemImage: "clock.arrow.circlepath") }
-                .tag(1)
+                .tabItem { Label(AppTab.timeline.title, systemImage: AppTab.timeline.systemImage) }
+                .tag(AppTab.timeline.rawValue)
 
             MeetingView()
-                .tabItem { Label("会议纪要", systemImage: "person.3") }
-                .tag(2)
+                .tabItem { Label(AppTab.meeting.title, systemImage: AppTab.meeting.systemImage) }
+                .tag(AppTab.meeting.rawValue)
 
             WeeklyReportView()
-                .tabItem { Label("周报", systemImage: "doc.text.magnifyingglass") }
-                .tag(3)
+                .tabItem { Label(AppTab.weekly.title, systemImage: AppTab.weekly.systemImage) }
+                .tag(AppTab.weekly.rawValue)
         }
         .environment(coordinator)
     }

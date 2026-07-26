@@ -33,9 +33,7 @@ extension Date {
     /// 仅日期：今年显示「M月d日」，跨年显示「yyyy年M月d日」
     var friendlyDate: String {
         let yearDelta = Calendar.current.dateComponents([.year], from: self, to: Date()).year ?? 0
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = yearDelta == 0 ? "M月d日" : "yyyy年M月d日"
+        let f = yearDelta == 0 ? Date.fmtFriendlyThisYear : Date.fmtFriendlyCrossYear
         return f.string(from: self)
     }
 
@@ -52,9 +50,7 @@ extension Date {
         }
         if cal.isDateInYesterday(self) { return "昨天 \(shortTime)" }
         let yearDelta = cal.dateComponents([.year], from: self, to: now).year ?? 0
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = yearDelta == 0 ? "M月d日 HH:mm" : "yyyy年M月d日"
+        let f = yearDelta == 0 ? Date.fmtRelativeThisYear : Date.fmtRelativeCrossYear
         return f.string(from: self)
     }
 
@@ -62,6 +58,31 @@ extension Date {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "yyyy年M月d日 EEEE"
+        return f
+    }()
+    /// friendlyDate / relativeTime 缓存好的 formatter（避免每次访问列表行都 new DateFormatter）
+    private static let fmtFriendlyThisYear: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日"
+        return f
+    }()
+    private static let fmtFriendlyCrossYear: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日"
+        return f
+    }()
+    private static let fmtRelativeThisYear: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 HH:mm"
+        return f
+    }()
+    private static let fmtRelativeCrossYear: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月d日"
         return f
     }()
     static let fmtISO: DateFormatter = {
@@ -79,10 +100,12 @@ extension Date {
 }
 
 extension Calendar {
-    /// 所在周的周一
+    /// 所在周的周一（显式锁定 firstWeekday=2，避免用户改系统区域为首日=周日时返回周日）
     func monday(for date: Date) -> Date {
-        let comps = dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
-        return self.date(from: comps) ?? date
+        var c = self
+        c.firstWeekday = 2   // 1=周日 ... 2=周一
+        let comps = c.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
+        return c.date(from: comps) ?? date
     }
     /// 月份首日
     func monthStart(for date: Date) -> Date {
