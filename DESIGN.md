@@ -66,6 +66,8 @@ App 由三个 SwiftUI Scene 组成，共享同一个 `AppStore`（持有 GRDB `D
 - **View 层写入口模式**（R14-R20 演进）：所有写操作在 view 内定义 `private func write(_ block: (AppStore) throws -> Void)` helper（或返回 Bool 的 `writeForDrop`），失败时把 `error.localizedDescription` 写入 `@State var writeError: String?`；body 末尾挂 `.writeErrorAlert($writeError)`（统一弹「写入失败」alert）。需要拿到返回值或精确错误处理的场景（如 `getOrCreateReport` / Settings 的 restore）仍直接走 throws API
 - 内联编辑（会议概要等）使用本地 `@State` 草稿 + `.onChange` guard + `.onDisappear` 三重保险写回 store（GRDB 无 SwiftData autosave，必须显式调用 store 写方法）；`MenuPanelView` 面板额外监听 `NSApplication.willResignActiveNotification` 兜底 flush（面板隐藏 ≠ view onDisappear）
 - 状态变量 `@State` 用于输入栏草稿、选中标签、折叠状态、内联编辑草稿等 UI 局部状态
+- **reloadAll 失败语义**（R21-B）：原版只 `AppLogger.error` 不清空内存快照，与「杜绝假成功」哲学相悖——reload 失败后内存与磁盘已脱节，UI 继续显示陈旧数据等于假数据。改为：失败时把 6 个实体数组 + 5 个关系映射全部置空，UI 显示空状态而非误导。配合 `writeErrorAlert` 形成完整的「写失败 / 读失败」反馈链路
+
 
 ## 3. 技术栈
 
@@ -1004,7 +1006,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，113 tests / 8 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，143 tests / 10 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1014,14 +1016,16 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 
 | Suite | 用例数 | 覆盖点 |
 |---|---|---|
-| `AppStoreTests` | 22 | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + 关系重建（4 张中间表）+ CASCADE + transactional 回滚 + unknown id 静默 no-op + addReview FK 违规 + markEntryDone race 防御 + vacuum |
-| `MigratorTests` | 2 | v1→v2 升级路径：dedup（保最早 createdAt、合并非空 note、迁移 tag 关系）+ UNIQUE 约束生效；no-op on clean v1 |
+| `AppStoreTests` | 25 | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + 关系重建（4 张中间表）+ CASCADE + transactional 回滚 + unknown id 静默 no-op + addReview FK 违规 + markEntryDone race 防御 + vacuum + insert 路径的 tag/review 同步绑定（R21-A） |
+| `MigratorTests` | 5 | v1→v2 dedup（保最早 createdAt、合并非空 note、迁移 tag 关系）+ UNIQUE 约束生效；no-op on clean v1；v3 扩展性（dummy v3 加列加索引数据保留）+ 幂等性（连续 migrate 两次 no-op）+ 索引回归（UNIQUE 索引在 v3 后仍能拦截重复插入） |
 | `BackupServiceTests` | 19 | weekKey 计算（周一锚点）+ 各类 backup 文件存在性 + prune 策略 + decode 高版本/坏 JSON 拒绝 + Snapshot round-trip |
 | `BackupServiceIntegrationTests` | 4 | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + encode/decode 保留 recurrence 字段 |
-| `RecurrenceServiceTests` | 9 | sweepMeetings/sweepWorkEntries 各场景（逾期推进 / 今天保留 / 一次性会议保留 / 同主题残留清理）+ markDone 克隆下一期 / blocker → done / 已 done 的 race no-op |
+| `RecurrenceServiceTests` | 11 | sweepMeetings/sweepWorkEntries 各场景（逾期推进 / 今天保留 / 一次性会议保留 / 同主题残留清理）+ markDone 克隆下一期 / blocker → done / 已 done 的 race no-op + 月度周期跨月边界（R21-A） |
 | `RecurrenceTests` | 21 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 |
 | `XLSXWriterTests` | 16 | XML 转义（4 实体 + 边界）+ 列字母转换（A-Z / AA-ZZ / AAA-ZZZ）+ CRC32 标准向量 |
 | `AppLoggerTests` | 7 | 日志滚动：未达上限 no-op / 创建 `.1` / 顺移现有文件 / 满槽删最旧 / maxBytes=0 立即滚 / keepCount=1 直删原文件 |
+| `ExportServiceTests` | 15 | csvEscape（RFC 4180 三种触发条件）+ sanitizeSheetName（7 禁用字符 + 31 字符截断）+ sanitizeFilename + weekdayName + markdownForDay 分组排序 + tag 渲染 + report note 渲染（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的提前 return bug）+ WorkKind.emoji 编译期覆盖所有 case |
+| `NavigationCoordinatorTests` | 5 | 越界 rawValue 兜底回 .today + 负值兜底 + 合法值持久化 round-trip + openMeetingEdit 切 tab 并设 meetingRequest；`.serialized` 隔离 UserDefaults.standard 单例的并发串扰 |
 
 ### 14.2 测试模式约定
 

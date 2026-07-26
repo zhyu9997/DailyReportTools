@@ -51,7 +51,20 @@ final class AppStore {
                 reviewsByMeeting = try RecordQueries.fetchReviewsByMeeting(db)
             }
         } catch {
-            AppLogger.error("AppStore.reloadAll 失败：\(error)")
+            // R21-B：原版只 log 不清空，UI 会继续显示陈旧数据（与 R14-R20「杜绝假成功」哲学相悖）。
+            // 写失败后 reload 失败时，内存快照已与磁盘脱节，必须清空让 UI 显示空状态而非误导用户
+            AppLogger.error("AppStore.reloadAll 失败，清空内存快照避免假数据：\(error)")
+            tags = []
+            reports = []
+            todos = []
+            entries = []
+            meetings = []
+            reviews = []
+            tagsByReport = [:]
+            tagsByTodo = [:]
+            tagsByEntry = [:]
+            tagsByMeeting = [:]
+            reviewsByMeeting = [:]
         }
     }
 
@@ -293,9 +306,11 @@ final class AppStore {
             // 另一处 sweepWorkEntries 可能刚推进了 finishDate，内存 original 已过期，
             // 用旧值算 nextRecurrenceDate 会跳过本该轮到的那一期
             guard var current = try WorkEntryRecord.fetchOne(db, key: id.uuidString) else { return }
-            // 再防御一次：另一窗口已把它改成 .done（race），本次调用应为 no-op
-            guard current.kindRaw != WorkKind.done.rawValue else { return }
-            let wasPlanned = (current.kindRaw == WorkKind.planned.rawValue)
+            // R21-B：再防御 race（另一窗口已把它改成 .done）。原版用 kindRaw 字符串比较，
+            // 若未来有人改 WorkKind.done.rawValue（如 "done" → "completed"），字符串比较会静默失效，
+            // 导致已 done 的任务被反复克隆。统一走枚举 .kind 计算属性更稳健
+            guard current.kind != .done else { return }
+            let wasPlanned = (current.kind == .planned)
             if current.isRecurring && wasPlanned {
                 var next = WorkEntryRecord(
                     id: UUID(),
@@ -350,12 +365,15 @@ final class AppStore {
                 try db.execute(sql: "INSERT INTO tag_meeting (tagId, meetingId) VALUES (?, ?)",
                                arguments: [tid.uuidString, rec.id.uuidString])
             }
-            for r in draft.reviews {
+            // R21-A 测试发现：原版用 r.order，但 NewReview.order 默认 0，调用方很少显式传，
+            // 导致批量插入的 review 全部 order=0，UI 显示顺序乱掉。
+            // 改为按数组下标（与 setMeetingReviews 一致），保证顺序由调用方数组决定
+            for (idx, r) in draft.reviews.enumerated() {
                 var review = ReviewRecord(
                     id: r.id,
                     reviewer: r.reviewer,
                     opinion: r.opinion,
-                    order: r.order,
+                    order: idx,
                     createdAt: r.createdAt,
                     meetingId: rec.id
                 )

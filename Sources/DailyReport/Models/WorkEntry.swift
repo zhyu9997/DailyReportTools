@@ -1,6 +1,17 @@
 import Foundation
 import SwiftUI
 
+// R21-D：常用时间间隔抽常量，替代散落在 Recurrence/RecurrenceService/WeeklyReportView
+// 多处的 86_400 / 366 * 86_400 / 7 * 86_400 裸算术。语义更清晰，改动一处即生效
+extension TimeInterval {
+    /// 一天的秒数（86_400）
+    static let day: TimeInterval = 86_400
+    /// 一周的秒数（7 × .day）
+    static let week: TimeInterval = 7 * .day
+    /// 一年的近似秒数（365 × .day，闰年精确处理请用 Calendar.date(byAdding:.year:)）
+    static let year: TimeInterval = 365 * .day
+}
+
 /// 工作任务分类
 enum WorkKind: String, Codable, CaseIterable, Identifiable {
     case done     = "完成"
@@ -27,6 +38,16 @@ enum WorkKind: String, Codable, CaseIterable, Identifiable {
         case .done:     .green
         case .planned:  .blue
         case .blocker:  .orange
+        }
+    }
+    /// Markdown 导出用的 emoji 占位（R21-C：原版 ExportService 用 SF Symbol 名做 switch 映射，
+    /// 双层魔数 + default fallthrough 会让未来新增 WorkKind 直接输出 SF Symbol 字符串到 md；
+    /// 移到 enum 内部让编译器强制覆盖所有 case）
+    var emoji: String {
+        switch self {
+        case .done:    "✅"
+        case .planned: "📅"
+        case .blocker: "🚧"
         }
     }
 }

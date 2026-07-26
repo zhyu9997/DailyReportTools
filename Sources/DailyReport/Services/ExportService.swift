@@ -17,14 +17,14 @@ final class ExportService {
     // MARK: Markdown
     /// 用户取消保存面板时静默返回（非错误）；写盘失败时抛错给调用方
     func exportDay(_ data: DayData) throws {
-        let md = markdownForDay(data)
+        let md = Self.markdownForDay(data)
         try save(filename: "日报-\(data.day.isoDay).md", content: md)
     }
 
     func exportWeek(_ days: [DayData], title: String, filename: String) throws {
         var s = "# \(title)\n\n"
         for d in days {
-            s += markdownForDay(d)
+            s += Self.markdownForDay(d)
             s += "---\n\n"
         }
         try save(filename: filename, content: s)
@@ -38,14 +38,15 @@ final class ExportService {
             let belong = e.finishDate ?? e.timestamp
             return [Self.weekdayName(belong), belong.isoDay, e.title, e.detail]
         }
-        try writeXLSX(filename: "\(sanitizeFilename(title)).xlsx",
-                      sheetName: sanitizeSheetName(title),
+        try writeXLSX(filename: "\(Self.sanitizeFilename(title)).xlsx",
+                      sheetName: Self.sanitizeSheetName(title),
                       header: ["星期", "日期", "标题", "详情"],
                       rows: rows)
     }
 
     /// 中文星期名（Calendar weekday：1=周日 … 7=周六）
-    private static func weekdayName(_ d: Date) -> String {
+    /// static：纯函数，方便测试覆盖（ErrorService 无需实例化即可调用）
+    static func weekdayName(_ d: Date) -> String {
         switch Calendar.current.component(.weekday, from: d) {
         case 1: "周日"; case 2: "周一"; case 3: "周二"; case 4: "周三"
         case 5: "周四"; case 6: "周五"; case 7: "周六"; default: ""
@@ -71,40 +72,44 @@ final class ExportService {
             let due = t.dueDate.map { $0.isoDay } ?? ""
             let done = t.completedAt.map { $0.isoDay } ?? ""
             let tags = (tagsByTodo[t.id] ?? []).map(\.name).joined(separator: "/")
-            csv += "\(csvEscape(t.title)),\(t.isDone ? "是" : "否"),\(due),\(t.createdAt.isoDay),\(done),\(csvEscape(tags))\n"
+            csv += "\(Self.csvEscape(t.title)),\(t.isDone ? "是" : "否"),\(due),\(t.createdAt.isoDay),\(done),\(Self.csvEscape(tags))\n"
         }
         try save(filename: "待办-\(Date().isoDay).csv", content: csv)
     }
 
     // MARK: - helpers
-    private func markdownForDay(_ data: DayData) -> String {
+    /// static：纯函数（只用 data 参数，不读 self），抽出便于单测覆盖
+    static func markdownForDay(_ data: DayData) -> String {
         var s = "## \(data.day.friendlyDay)\n\n"
         if data.entries.isEmpty {
             s += "_（无任务记录）_\n\n"
-            return s
-        }
-        for kind in WorkKind.allCases {
-            let group = data.entries.filter { $0.kind == kind }.sorted { $0.timestamp < $1.timestamp }
-            if group.isEmpty { continue }
-            s += "### \(kind.icon.emoji) \(kind.rawValue)\n\n"
-            for e in group {
-                let tags = data.tagsByEntry[e.id] ?? []
-                var line = "- \(e.title)"
-                if !tags.isEmpty { line += " · " + tags.map { "`\($0.name)`" }.joined(separator: " ") }
-                s += line + "\n"
-                if !e.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    s += "    \(e.detail)\n"
+        } else {
+            for kind in WorkKind.allCases {
+                let group = data.entries.filter { $0.kind == kind }.sorted { $0.timestamp < $1.timestamp }
+                if group.isEmpty { continue }
+                s += "### \(kind.emoji) \(kind.rawValue)\n\n"
+                for e in group {
+                    let tags = data.tagsByEntry[e.id] ?? []
+                    var line = "- \(e.title)"
+                    if !tags.isEmpty { line += " · " + tags.map { "`\($0.name)`" }.joined(separator: " ") }
+                    s += line + "\n"
+                    if !e.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        s += "    \(e.detail)\n"
+                    }
                 }
+                s += "\n"
             }
-            s += "\n"
         }
+        // R21-A 测试发现：原版 entries 为空时提前 return 导致 note 不渲染。
+        // 当某天没记任务但写了日报备注时导出 Markdown 看不到备注，丢字
         if let note = data.report?.note, !note.isEmpty {
             s += "### 备注\n\n\(note)\n\n"
         }
         return s
     }
 
-    private func csvEscape(_ s: String) -> String {
+    /// static：纯函数，CSV 转义规则 RFC 4180（含逗号/引号/换号时整体加引号 + 引号双写）
+    static func csvEscape(_ s: String) -> String {
         if s.contains(",") || s.contains("\"") || s.contains("\n") {
             return "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         }
@@ -112,7 +117,8 @@ final class ExportService {
     }
 
     /// Excel 工作表名限制：≤31 字符，不含 \ / ? * [ ] :
-    private func sanitizeSheetName(_ s: String) -> String {
+    /// static：纯函数，便于单测
+    static func sanitizeSheetName(_ s: String) -> String {
         var name = s
         for ch in ["\\", "/", "?", "*", "[", "]", ":"] {
             name = name.replacingOccurrences(of: ch, with: "-")
@@ -121,7 +127,8 @@ final class ExportService {
     }
 
     /// 文件名限制：macOS 不允许 / 和 :
-    private func sanitizeFilename(_ s: String) -> String {
+    /// static：纯函数，便于单测
+    static func sanitizeFilename(_ s: String) -> String {
         var name = s
         for ch in ["/", ":"] {
             name = name.replacingOccurrences(of: ch, with: "-")
@@ -159,18 +166,6 @@ final class ExportService {
         } catch {
             AppLogger.error("XLSX 写盘失败（filename=\(filename)）：\(error)")
             throw error
-        }
-    }
-}
-
-private extension String {
-    /// 简易：把 SF Symbol 名换成 emoji 占位（Markdown 里 icon 显示不友好）
-    var emoji: String {
-        switch self {
-        case "checkmark.circle.fill":   "✅"
-        case "calendar":                "📅"
-        case "exclamationmark.triangle.fill": "🚧"
-        default:                        self
         }
     }
 }

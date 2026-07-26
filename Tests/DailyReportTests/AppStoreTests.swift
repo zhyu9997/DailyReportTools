@@ -505,4 +505,72 @@ import GRDB
         _ = try store.insertTag(NewTag(name: "y", colorHex: "#111111"))
         #expect(store.tags.count == 2)
     }
+
+    // MARK: - insert 路径的关系绑定（R21-A 新增）
+    // setEntryTags / setMeetingTags / setReportTags / setTodoTags 都有专属测试，
+    // 但 insertTodo/insertEntry/insertMeeting 的实现里**同步插入**中间表行——
+    // 这是一份独立代码路径，错了不会让 set*Tests 红，需单独断言
+
+    /// insertTodo 后 tagsByTodo 应立即可见 tag 关系
+    @Test func insertTodoBindsTagsAtomically() async throws {
+        let store = try Self.makeStore()
+        let t1 = try store.insertTag(NewTag(name: "t1", colorHex: "#000000"))
+        let t2 = try store.insertTag(NewTag(name: "t2", colorHex: "#111111"))
+
+        let todo = try store.insertTodo(NewTodo(
+            title: "Task", notes: "", dueDate: nil, tagIds: [t1.id, t2.id]
+        ))
+
+        let boundTagIds = store.tagsByTodo[todo.id]?.map(\.id).sorted()
+        #expect(boundTagIds == [t1.id, t2.id].sorted())
+    }
+
+    /// insertEntry 后 tagsByEntry 应立即可见 tag 关系
+    @Test func insertEntryBindsTagsAtomically() async throws {
+        let store = try Self.makeStore()
+        let t1 = try store.insertTag(NewTag(name: "t1", colorHex: "#000000"))
+        let t2 = try store.insertTag(NewTag(name: "t2", colorHex: "#111111"))
+
+        let entry = try store.insertEntry(NewWorkEntry(
+            title: "E", detail: "", timestamp: Date(), kind: .done,
+            tagIds: [t1.id, t2.id], finishDate: nil, helper: nil,
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            blockerStatus: .ongoing, priority: .medium
+        ))
+
+        let boundTagIds = store.tagsByEntry[entry.id]?.map(\.id).sorted()
+        #expect(boundTagIds == [t1.id, t2.id].sorted())
+    }
+
+    /// insertMeeting 后 tagsByMeeting 与 reviewsByMeeting 应立即可见
+    /// 验证 tag 关系 + review 同步插入路径（同一事务里）
+    @Test func insertMeetingBindsTagsAndReviewsAtomically() async throws {
+        let store = try Self.makeStore()
+        let t1 = try store.insertTag(NewTag(name: "t1", colorHex: "#000000"))
+
+        let meeting = try store.insertMeeting(NewMeeting(
+            topic: "M", summary: "",
+            timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            tagIds: [t1.id],
+            reviews: [
+                NewReview(reviewer: "A", opinion: "agree"),
+                NewReview(reviewer: "B", opinion: "disagree")
+            ]
+        ))
+
+        // tag 绑定
+        let boundTagIds = store.tagsByMeeting[meeting.id]?.map(\.id)
+        #expect(boundTagIds == [t1.id])
+        // review 同步插入
+        let reviews = store.reviewsByMeeting[meeting.id] ?? []
+        #expect(reviews.count == 2)
+        // 全局 reviews 快照也应包含这两条
+        #expect(store.reviews.count == 2)
+        // order 字段应按数组下标（0, 1）
+        let sortedOrders = reviews.map(\.order).sorted()
+        #expect(sortedOrders == [0, 1])
+    }
 }

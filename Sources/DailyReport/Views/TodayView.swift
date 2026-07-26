@@ -372,24 +372,13 @@ struct TodayView: View {
     }
 }
 
-/// 今日会议行（独立子视图，承载 summary 内联编辑的本地 @State 草稿）
+/// 今日会议行（独立子视图）
+/// R21-C：summary 内联编辑已抽到 InlineSummaryEditor 共享，本视图只负责会议主题 / 标签的展示
 private struct TodayMeetingRow: View {
     @Environment(\.appStore) private var store
     let meeting: MeetingRecord
-    @State private var summaryDraft: String = ""
-    @State private var loaded = false
-    @State private var debounceTask: Task<Void, Never>?
-    /// 写失败反馈：flushSummary 走 throw-aware 入口，避免 store?.run 吞 throws 后概要静默丢字
-    @State private var writeError: String?
 
     private var tags: [TagRecord] { store?.tagsByMeeting[meeting.id] ?? [] }
-
-    /// 统一写入口：失败时弹 alert 反馈（与 WorkEntryCard/MeetingCard 同模式）
-    private func write(_ block: (AppStore) throws -> Void) {
-        guard let store else { return }
-        do { try block(store) }
-        catch { writeError = error.localizedDescription }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -410,17 +399,8 @@ private struct TodayMeetingRow: View {
                 Text(meeting.timestamp.formatted(date: .omitted, time: .shortened))
                     .font(.caption2).foregroundStyle(.tertiary)
             }
-            ZStack(alignment: .topLeading) {
-                if summaryDraft.isEmpty {
-                    Text("点这里写会议概要…")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 5)
-                        .allowsHitTesting(false)
-                }
-                summaryEditor
-            }
+            InlineSummaryEditor(meeting: meeting, style: .compact,
+                                placeholder: "点这里写会议概要…")
             if !tags.isEmpty {
                 HStack(spacing: 3) {
                     ForEach(tags) { tag in
@@ -437,59 +417,5 @@ private struct TodayMeetingRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.2), lineWidth: 1))
-        .writeErrorAlert($writeError)
-    }
-
-    /// onChange 回调：手动 debounce 0.3s（macOS 14 没有 .onChange(debounce:)，macOS 15+ 才支持）
-    /// 每次 summaryDraft 变化取消上一个未触发的 Task，重新计时；onDisappear 兜底立即 flush
-    private func scheduleFlush() {
-        debounceTask?.cancel()
-        debounceTask = Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            flushSummary()
-        }
-    }
-
-    /// 真正执行写回
-    private func flushSummary() {
-        guard loaded, summaryDraft != meeting.summary else { return }
-        write { try $0.updateMeeting(meeting.id) { $0.summary = summaryDraft } }
-        debounceTask = nil
-    }
-
-    /// 把 TextEditor + 三段写回逻辑抽成独立 view，避免 TodayMeetingRow 整体表达式过深触 type-check 超时
-    @ViewBuilder
-    private var summaryEditor: some View {
-        TextEditor(text: $summaryDraft)
-            .font(.caption)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: 28, alignment: .top)
-            .padding(.horizontal, 2)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
-            .onChange(of: summaryDraft) { _, _ in scheduleFlush() }
-            .onAppear {
-                if !loaded {
-                    summaryDraft = meeting.summary
-                    loaded = true
-                }
-            }
-            .onDisappear {
-                debounceTask?.cancel()
-                flushSummary()
-            }
-            // 视图被 ForEach 复用到另一条会议时（id 变了）：丢弃草稿，下次 onAppear 重载
-            .onChange(of: meeting.id) { _, _ in
-                debounceTask?.cancel()
-                debounceTask = nil
-                summaryDraft = ""
-                loaded = false
-            }
-            // 外部更新（如 MeetingFormView 保存）同步到草稿：用户未在编辑时才覆盖
-            .onChange(of: meeting.summary) { _, newValue in
-                guard loaded, debounceTask == nil else { return }
-                summaryDraft = newValue
-            }
     }
 }

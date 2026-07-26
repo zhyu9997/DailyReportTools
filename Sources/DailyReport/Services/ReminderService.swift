@@ -56,7 +56,10 @@ final class ReminderService {
         let center = UNUserNotificationCenter.current()
         // cancel 上一次 pending reschedule：用户连续拖滑块时只让最新一次跑到决策点
         pendingReschedule?.cancel()
-        pendingReschedule = Task {
+        // R21-B：显式标 @MainActor。原版 Task 继承 self 的 @MainActor 隔离靠编译器隐式推断，
+        // 但 Task 闭包内访问 self.pendingReschedule 与 self.currentAuthorizationStatus() 依赖隔离边界，
+        // 显式标注让并发语义不依赖编译器版本变化
+        pendingReschedule = Task { @MainActor in
             // enabled=false：用户在 app 内关闭 → 无条件 remove pending，不再 add
             guard !Task.isCancelled, enabled else {
                 if Task.isCancelled { return }

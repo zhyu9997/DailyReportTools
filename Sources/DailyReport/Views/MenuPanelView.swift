@@ -384,31 +384,16 @@ struct MenuPanelView: View {
 }
 
 /// 菜单栏面板的会议行：点击展开内联编辑概要
+/// R21-C：summary 内联编辑已抽到 InlineSummaryEditor（panel style：圆角 4，更轻量）。
+/// 本视图负责折叠按钮 + 展开/收起动画 + willResignActive 兜底（菜单栏面板独有，
+/// InlineSummaryEditor 通用化时无法内置此特殊监听）
 private struct MeetingPanelRow: View {
-    @Environment(\.appStore) private var store
     let meeting: MeetingRecord
     @State private var expanded = false
-    @State private var summaryDraft = ""
-    @State private var loaded = false
-    @State private var debounceTask: Task<Void, Never>?
-    /// 写失败反馈：flushSummary 走 throw-aware 入口，避免 store?.run 吞 throws 后概要静默丢字
-    @State private var writeError: String?
-
-    /// 统一写入口：失败时弹 alert 反馈（与 MeetingCard/TodayMeetingRow 同模式）
-    private func write(_ block: (AppStore) throws -> Void) {
-        guard let store else { return }
-        do { try block(store) }
-        catch { writeError = error.localizedDescription }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                // 折叠前：取消 pending debounce 并立即写回，避免丢失刚输入未落盘的字符
-                if expanded {
-                    debounceTask?.cancel()
-                    flushSummary()
-                }
                 withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
@@ -442,76 +427,13 @@ private struct MeetingPanelRow: View {
             .buttonStyle(.plain)
 
             if expanded {
-                ZStack(alignment: .topLeading) {
-                    if summaryDraft.isEmpty {
-                        Text("点这里写会议概要…")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 5)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: $summaryDraft)
-                        .font(.caption)
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 28, alignment: .top)
-                        .padding(.horizontal, 2)
-                        .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2)))
-                        .onChange(of: summaryDraft) { _, _ in scheduleFlush() }
-                        .onAppear {
-                            if !loaded {
-                                summaryDraft = meeting.summary
-                                loaded = true
-                            }
-                        }
-                        .onDisappear {
-                            debounceTask?.cancel()
-                            flushSummary()
-                        }
-                        // 视图被 ForEach 复用到另一条会议时（id 变了）：丢弃草稿，下次 onAppear 重载
-                        .onChange(of: meeting.id) { _, _ in
-                            debounceTask?.cancel()
-                            debounceTask = nil
-                            summaryDraft = ""
-                            loaded = false
-                        }
-                        // 外部更新（如 MeetingFormView 保存）同步到草稿：用户未在编辑时才覆盖
-                        .onChange(of: meeting.summary) { _, newValue in
-                            guard loaded, debounceTask == nil else { return }
-                            summaryDraft = newValue
-                        }
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                InlineSummaryEditor(meeting: meeting, style: .panel,
+                                    placeholder: "点这里写会议概要…",
+                                    flushOnResignActive: true)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(.vertical, 3).padding(.horizontal, 6)
         .background(RoundedRectangle(cornerRadius: 5).fill(Color.purple.opacity(0.05)))
-        // 菜单栏面板失焦（点别处/切应用）时 TextEditor 的 onDisappear 不一定会触发
-        // （MenuBarExtra window 隐藏 ≠ view 拆除）：监听 willResignActive 兜底立即 flush
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
-            guard expanded, loaded else { return }
-            debounceTask?.cancel()
-            flushSummary()
-        }
-        .writeErrorAlert($writeError)
-    }
-
-    /// onChange 回调：手动 debounce 0.3s（macOS 14 没有 .onChange(debounce:)，macOS 15+ 才支持）
-    /// 每次 summaryDraft 变化取消上一个未触发的 Task，重新计时；onDisappear 兜底立即 flush
-    private func scheduleFlush() {
-        debounceTask?.cancel()
-        debounceTask = Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            flushSummary()
-        }
-    }
-
-    /// 真正执行写回
-    private func flushSummary() {
-        guard loaded, summaryDraft != meeting.summary else { return }
-        write { try $0.updateMeeting(meeting.id) { $0.summary = summaryDraft } }
-        debounceTask = nil
     }
 }

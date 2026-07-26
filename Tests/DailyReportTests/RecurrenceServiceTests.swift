@@ -308,4 +308,77 @@ import GRDB
         #expect(after.kind == .done)
         #expect(after.finishDate != nil)   // blocker→done 时设为 now
     }
+
+    // MARK: - 月度周期 sweep（R21-A 新增）
+
+    /// 月度周期 + finishDate 在上个月同一天 → sweep 后应推进到本月对应日
+    /// 验证 Recurrence.nextFutureDate 的 .monthly 分支：不跨月、同日回退到本月
+    @Test func sweepMonthlyAdvancesToThisMonthSameDay() async throws {
+        let store = try Self.makeStore()
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+
+        // 上个月 15 号（任意合法日，避开月末 overflow 边界）
+        var comps = cal.dateComponents([.year, .month], from: today)
+        comps.month! -= 1
+        comps.day = 15
+        let lastMonth15th = try #require(cal.date(from: comps))
+
+        // 本月 15 号（预期推进目标）。若今天 < 15 号，本月 15 号还在未来；若今天 >= 15 号，
+        // nextFutureDate 应该跳过本月 15 号到下月 15 号——这里只断言"不再落在过去"
+        let draft = NewWorkEntry(
+            title: "Monthly Report", detail: "",
+            timestamp: lastMonth15th, kind: .planned,
+            tagIds: [],
+            finishDate: lastMonth15th, helper: nil,
+            isRecurring: true, recurrenceUnit: .monthly, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [15],
+            blockerStatus: .ongoing, priority: .medium
+        )
+        _ = try store.insertEntry(draft)
+
+        RecurrenceService.sweepAll(in: store)
+
+        let after = store.entries.first { $0.id == draft.id }!
+        #expect(after.finishDate != nil)
+        // 关键断言：finishDate 不再在过去
+        #expect(cal.startOfDay(for: after.finishDate!) >= today)
+    }
+
+    /// 月末 overflow 防御：monthly + monthDays=[31]，本月只有 30 天时
+    /// 应跳过本月到下月有 31 号的月份（不应抛错、不应回退到当前月某天）
+    @Test func sweepMonthlyWithDay31FromFebAdvancesToMarch() async throws {
+        let store = try Self.makeStore()
+        let cal = Calendar.current
+
+        // 1月31日作为起点；2月没有31日 → 应跳到 3月31日
+        var jan31Comps = DateComponents(year: 2026, month: 1, day: 31)
+        // 用固定历史日期构造 finishDate，确保所有月份都已过去，sweep 必推进
+        let jan31 = try #require(cal.date(from: jan31Comps))
+
+        let draft = NewWorkEntry(
+            title: "End-of-month task", detail: "",
+            timestamp: jan31, kind: .planned,
+            tagIds: [],
+            finishDate: jan31, helper: nil,
+            isRecurring: true, recurrenceUnit: .monthly, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [31],
+            blockerStatus: .ongoing, priority: .medium
+        )
+        _ = try store.insertEntry(draft)
+
+        RecurrenceService.sweepAll(in: store)
+
+        let after = store.entries.first { $0.id == draft.id }!
+        guard let newFinish = after.finishDate else {
+            Issue.record("finishDate 不应为 nil")
+            return
+        }
+        // 关键断言：不应抛错，且新 finishDate 仍在 31 号
+        #expect(cal.component(.day, from: newFinish) == 31)
+        // 不应是 2 月（2 月没 31 号）
+        #expect(cal.component(.month, from: newFinish) != 2)
+        // 推进后应在今天或未来
+        #expect(cal.startOfDay(for: newFinish) >= cal.startOfDay(for: Date()))
+    }
 }

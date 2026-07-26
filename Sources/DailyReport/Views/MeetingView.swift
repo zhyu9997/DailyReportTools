@@ -60,10 +60,8 @@ struct MeetingCard: View {
     @State private var isAddingReview = false
     @State private var newReviewer = ""
     @State private var newOpinion = ""
-    @State private var summaryDraft = ""
-    @State private var summaryLoaded = false
-    @State private var debounceTask: Task<Void, Never>?
-    /// 写失败反馈：saveAdd / flushSummary 走 throw-aware 入口，避免 store?.run 吞 throws 后 UI 假成功
+    /// 写失败反馈：saveAdd 走 throw-aware 入口，避免 store?.run 吞 throws 后 UI 假成功
+    /// R21-C：summary 内联编辑的 writeError 已搬到 InlineSummaryEditor
     @State private var writeError: String?
 
     private var tags: [TagRecord] { store?.tagsByMeeting[meeting.id] ?? [] }
@@ -207,6 +205,7 @@ struct MeetingCard: View {
     }
 
     /// 概要：未来会议可随时内联编辑；已完成（timestamp ≤ 现在）的会议只读，避免误改
+    /// R21-C：内联编辑器抽到 InlineSummaryEditor，本视图只保留只读分支
     @ViewBuilder
     private var summaryEditor: some View {
         if meeting.timestamp <= Date() {
@@ -217,46 +216,7 @@ struct MeetingCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            ZStack(alignment: .topLeading) {
-                if summaryDraft.isEmpty {
-                    Text("点这里写概要…")
-                        .font(.subheadline)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 7)
-                        .allowsHitTesting(false)
-                }
-                TextEditor(text: $summaryDraft)
-                    .font(.subheadline)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 36, alignment: .top)
-                    .padding(.horizontal, 4)
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.4))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
-                    .onChange(of: summaryDraft) { _, _ in scheduleFlush() }
-                    .onAppear {
-                        if !summaryLoaded {
-                            summaryDraft = meeting.summary
-                            summaryLoaded = true
-                        }
-                    }
-                    .onDisappear {
-                        debounceTask?.cancel()
-                        flushSummary()
-                    }
-                    // 视图被 ForEach 复用到另一条会议时（id 变了）：丢弃草稿，下次 onAppear 重载
-                    .onChange(of: meeting.id) { _, _ in
-                        debounceTask?.cancel()
-                        debounceTask = nil
-                        summaryDraft = ""
-                        summaryLoaded = false
-                    }
-                    // 外部更新（如 MeetingFormView 保存）同步到草稿：用户未在编辑时才覆盖
-                    .onChange(of: meeting.summary) { _, newValue in
-                        guard summaryLoaded, debounceTask == nil else { return }
-                        summaryDraft = newValue
-                    }
-            }
+            InlineSummaryEditor(meeting: meeting, style: .standard)
         }
     }
 
@@ -277,24 +237,6 @@ struct MeetingCard: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.08)))
             }
         }
-    }
-
-    /// onChange 回调：手动 debounce 0.3s（macOS 14 没有 .onChange(debounce:)，macOS 15+ 才支持）
-    /// 每次 summaryDraft 变化取消上一个未触发的 Task，重新计时；onDisappear 兜底立即 flush
-    private func scheduleFlush() {
-        debounceTask?.cancel()
-        debounceTask = Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            flushSummary()
-        }
-    }
-
-    /// 真正执行写回
-    private func flushSummary() {
-        guard summaryLoaded, summaryDraft != meeting.summary else { return }
-        write { try $0.updateMeeting(meeting.id) { $0.summary = summaryDraft } }
-        debounceTask = nil
     }
 }
 

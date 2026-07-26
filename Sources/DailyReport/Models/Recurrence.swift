@@ -28,7 +28,7 @@ enum Recurrence {
             let n = max(1, interval)
             if base > now { return base }
             let elapsed = now.timeIntervalSince(base)
-            let stepSeconds = TimeInterval(n) * 86_400
+            let stepSeconds = TimeInterval(n) * .day
             let jumps = Int(elapsed / stepSeconds)   // 已完整过去的步数
             var d = cal.date(byAdding: .day, value: jumps * n, to: base) ?? base
             // 末尾小步微调：通常 ≤ 1 次
@@ -43,14 +43,14 @@ enum Recurrence {
             let stepDays = 7 * n
             // 锚点用 base 而非 now：interval>1 时需要固定的窗口起点（每 n 周一个）
             let anchor = cal.startOfDay(for: base)
-            let cap = max(now, base).addingTimeInterval(366 * 86_400)
+            let cap = max(now, base).addingTimeInterval(366 * .day)
             // O(1) 跳到当前窗口起点；base 在未来则从 anchor 起算
             var windowStart: Date
             if base >= now {
                 windowStart = anchor
             } else {
                 let elapsed = now.timeIntervalSince(anchor)
-                let stepSec = TimeInterval(stepDays) * 86_400
+                let stepSec = TimeInterval(stepDays) * .day
                 let jumps = Int(elapsed / stepSec)
                 windowStart = cal.date(byAdding: .day, value: jumps * stepDays, to: anchor) ?? anchor
             }
@@ -87,7 +87,7 @@ enum Recurrence {
             // O(1) 跳到当前或前一个允许的月份
             let jumps = max(0, monthDiff) / n
             var monthCursor = cal.date(byAdding: .month, value: jumps * n, to: anchorMonthStart) ?? anchorMonthStart
-            let cap = max(now, base).addingTimeInterval(366 * 86_400)
+            let cap = max(now, base).addingTimeInterval(366 * .day)
             var iterations = 0
             while monthCursor <= cap && iterations < 60 {
                 let mc = cal.dateComponents([.year, .month], from: monthCursor)

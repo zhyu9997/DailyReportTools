@@ -147,6 +147,21 @@ enum AppMigrator {
             }
             try db.create(index: "uq_daily_report_date", on: "daily_report", columns: ["date"], unique: true)
         }
+        // v3：给 4 张多对多中间表的 owner 列加索引
+        // 原版只有复合主键索引 (tagId, ownerId)，反向按 ownerId 查（fetchTagMap 的 ownerColumn）
+        // 走全表扫描。数据量上来后（如几千个 entry × 几个 tag = 数万行）每次 reloadAll
+        // 都会全扫 4 次。加 owner 列索引后 reload 性能从 O(N×表数) 降到 O(log N×表数)
+        // 安全：CREATE INDEX 是纯增量操作，不改数据，不会丢字段
+        m.registerMigration("v3_indexes_on_tag_link_owners") { db in
+            try db.create(index: "idx_tag_daily_report_reportId",
+                          on: "tag_daily_report", columns: ["reportId"])
+            try db.create(index: "idx_tag_todo_todoId",
+                          on: "tag_todo", columns: ["todoId"])
+            try db.create(index: "idx_tag_work_entry_entryId",
+                          on: "tag_work_entry", columns: ["entryId"])
+            try db.create(index: "idx_tag_meeting_meetingId",
+                          on: "tag_meeting", columns: ["meetingId"])
+        }
         return m
     }
 }

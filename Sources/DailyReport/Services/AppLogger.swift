@@ -28,13 +28,12 @@ enum AppLogger {
     /// 跨线程写入互斥（os_unfair_lock 包装为类属性更顺手）
     private static let writeLock = NSLock()
 
-    /// 时间戳 formatter 缓存（避免每次写日志都新建 ISO8601DateFormatter）
-    /// ISO8601DateFormatter 非 Sendable，但只读使用 + 由 writeLock 串行化访问，安全
-    private nonisolated(unsafe) static let timestampFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
+    /// 时间戳格式化样式（R21-D：原版用 nonisolated(unsafe) ISO8601DateFormatter，
+    /// invariant「仅 writeLock 内访问 timestamp()」靠口头约束易破。改为
+    /// Date.ISO8601FormatStyle：值类型 + Sendable，编译期线程安全，无并发顾虑）
+    private static let timestampStyle: Date.ISO8601FormatStyle = .iso8601
+        .year().month().day()
+        .time(includingFractionalSeconds: true)
 
     /// 一次性迁移：把旧位置 `db/logs/app.log*` 搬到新位置 `<appDir>/logs/`
     /// 新目录已存在 app.log / 旧目录不存在 / 旧目录为空时直接跳过
@@ -132,6 +131,6 @@ enum AppLogger {
     }
 
     private static func timestamp() -> String {
-        timestampFormatter.string(from: Date())
+        Date.now.formatted(timestampStyle)
     }
 }

@@ -69,7 +69,7 @@ enum RecurrenceService {
         // （滚动而非写死绝对日期：app 长期运行不会过期失效）
         let cleanupExpiry = Calendar.current.date(byAdding: .month, value: 6, to: Date())!
         guard startOfToday <= cleanupExpiry else { return }
-        let residualCutoff = startOfToday.addingTimeInterval(-7 * 86_400)
+        let residualCutoff = startOfToday.addingTimeInterval(-.week)
         for m in meetings where !m.isRecurring
             && m.createdAt <= residualCutoff
             && recurringTopics.contains(m.topic)

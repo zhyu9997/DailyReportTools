@@ -28,7 +28,7 @@ struct WeeklyReportView: View {
 
     private var weekEntries: [WorkEntryRecord] {
         let r = weekRange
-        let endNext = r.end.addingTimeInterval(86_400)
+        let endNext = r.end.addingTimeInterval(.day)
         return entries.filter {
             let b = belongDate($0)
             return b >= r.start && b < endNext
