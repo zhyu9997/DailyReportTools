@@ -54,14 +54,7 @@ struct TagPicker: View {
         } message: {
             Text(pendingDeleteTag.map { "标签「\($0.name)」会从所有任务/会议/日报移除。" } ?? "")
         }
-        .alert("写入失败", isPresented: Binding(
-            get: { writeError != nil },
-            set: { if !$0 { writeError = nil } }
-        )) {
-            Button("好", role: .cancel) { writeError = nil }
-        } message: {
-            Text(writeError ?? "")
-        }
+        .writeErrorAlert($writeError)
     }
 
     // MARK: - 完整版（标题 + FlowLayout 胶囊）

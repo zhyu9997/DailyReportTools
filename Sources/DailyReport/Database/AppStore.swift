@@ -78,20 +78,6 @@ final class AppStore {
         try dbQueue.read { try block($0) }
     }
 
-    /// view 层便捷入口：吞掉 throws 并打 warn 日志，避免每个调用点写 try? 或 do/catch
-    /// 失败时 UI 不会刷新（数据未变），用户可重试；适合用于「点按钮 / 拖拽 / 删除」等单向操作
-    /// 需要拿到返回值或精确错误处理的场景仍用 throws API
-    ///
-    /// ⚠️ deprecated（R19）：吞 throws 会让用户操作静默失败。新代码请用 view 内 `write { try ... }`
-    /// helper 包装 + writeError alert 模式（参考 WorkEntryCard/MeetingCard/TagPicker）。
-    /// 本方法仅保留给历史调用点过渡，最终目标全仓清零
-    @available(*, deprecated, message: "用 view 内 write helper + writeError alert 暴露失败，避免 UI 假成功")
-    func run(_ block: (AppStore) throws -> Void) {
-        do { try block(self) } catch {
-            AppLogger.warn("AppStore 操作失败：\(error)")
-        }
-    }
-
     // MARK: - Tag
 
     func insertTag(_ draft: NewTag) throws -> TagRecord {

@@ -221,14 +221,7 @@ struct TodayView: View {
             } message: {
                 Text(Self.deleteMessage(pendingDeleteEntry))
             }
-            .alert("写入失败", isPresented: Binding(
-                get: { writeError != nil },
-                set: { if !$0 { writeError = nil } }
-            )) {
-                Button("好", role: .cancel) { writeError = nil }
-            } message: {
-                Text(writeError ?? "")
-            }
+            .writeErrorAlert($writeError)
         }
         .task { await loadReport() }
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
@@ -444,14 +437,7 @@ private struct TodayMeetingRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.2), lineWidth: 1))
-        .alert("写入失败", isPresented: Binding(
-            get: { writeError != nil },
-            set: { if !$0 { writeError = nil } }
-        )) {
-            Button("好", role: .cancel) { writeError = nil }
-        } message: {
-            Text(writeError ?? "")
-        }
+        .writeErrorAlert($writeError)
     }
 
     /// onChange 回调：手动 debounce 0.3s（macOS 14 没有 .onChange(debounce:)，macOS 15+ 才支持）

@@ -134,14 +134,7 @@ struct MeetingCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.2), lineWidth: 1))
-        .alert("写入失败", isPresented: Binding(
-            get: { writeError != nil },
-            set: { if !$0 { writeError = nil } }
-        )) {
-            Button("好", role: .cancel) { writeError = nil }
-        } message: {
-            Text(writeError ?? "")
-        }
+        .writeErrorAlert($writeError)
     }
 
     /// 卡片内联新增评审

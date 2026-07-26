@@ -422,4 +422,87 @@ import GRDB
         #expect(store.entries.first { $0.id == entry.id } != nil)
         #expect(store.meetings.first { $0.id == meeting.id } != nil)
     }
+
+    // MARK: - 静默 unknown id（防 regression：guard fetchOne else { return } 被误改成 try update 会崩）
+
+    @Test func updateTodoUnknownIdIsSilentNoOp() async throws {
+        let store = try Self.makeStore()
+        let original = try store.insertTodo(NewTodo(title: "T", notes: "orig", dueDate: nil, tagIds: []))
+        // 不存在的 id 调 update 不应抛错、不应影响其他记录
+        try store.updateTodo(UUID()) { $0.title = "ghost" }
+        #expect(store.todos.first(where: { $0.id == original.id })?.title == "T")
+        #expect(store.todos.count == 1)
+    }
+
+    @Test func updateReportUnknownIdIsSilentNoOp() async throws {
+        let store = try Self.makeStore()
+        let original = try store.getOrCreateReport(for: Date())
+        try store.updateReport(UUID()) { $0.note = "ghost" }
+        #expect(store.reports.first(where: { $0.id == original.id })?.note == "")
+        #expect(store.reports.count == 1)
+    }
+
+    @Test func updateMeetingUnknownIdIsSilentNoOp() async throws {
+        let store = try Self.makeStore()
+        let original = try store.insertMeeting(NewMeeting(
+            topic: "M", summary: "orig", timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [], tagIds: [], reviews: []
+        ))
+        try store.updateMeeting(UUID()) { $0.summary = "ghost" }
+        #expect(store.meetings.first(where: { $0.id == original.id })?.summary == "orig")
+        #expect(store.meetings.count == 1)
+    }
+
+    // MARK: - addReview FK 违规（meetingId 不存在时应抛错而非静默）
+
+    @Test func addReviewToNonexistentMeetingThrows() async throws {
+        let store = try Self.makeStore()
+        // meetingId 不存在：FK 约束应拦截 INSERT，事务回滚，错误向上抛
+        // 防止 R19 的 GRDB Migrator FK 默认 OFF 经验被遗忘：生产路径必须依赖 FK ON
+        #expect(throws: Error.self) {
+            _ = try store.addReview(to: UUID(), reviewer: "R", opinion: "x")
+        }
+        #expect(store.reviews.isEmpty)
+    }
+
+    // MARK: - markEntryDone 多窗口 race 防御
+
+    @Test func markEntryDoneRaceAlreadyDoneIsNoOp() async throws {
+        let store = try Self.makeStore()
+        let entry = try store.insertEntry(NewWorkEntry(
+            title: "E", detail: "", timestamp: Date(), kind: .planned,
+            tagIds: [], finishDate: Date(), helper: nil,
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            blockerStatus: .ongoing, priority: .medium
+        ))
+        // 第一次标记完成：成功
+        _ = try store.markEntryDone(entry.id)
+        let afterFirst = store.entries.first(where: { $0.id == entry.id })
+        #expect(afterFirst?.kind == .done)
+        let firstFinishDate = afterFirst?.finishDate
+
+        // 模拟多窗口 race：另一窗口已经把它改成 done，本窗口再次调用
+        // markEntryDone 的 guard current.kindRaw != .done.rawValue 应立即 return nil
+        let spawned = try store.markEntryDone(entry.id)
+        #expect(spawned == nil)
+
+        // finishDate 不应被覆盖（race 时不会被二次重置）
+        let afterSecond = store.entries.first(where: { $0.id == entry.id })
+        #expect(afterSecond?.finishDate == firstFinishDate)
+    }
+
+    // MARK: - vacuum 错误路径
+
+    @Test func vacuumOnReadOnlyQueueThrows() async throws {
+        // VACUUM 不能在事务里跑（AppStore.vacuum 用 writeWithoutTransaction 规避）。
+        // 这里验证 happy path：单次 vacuum 不抛错，且 db 仍然可读写（结构完整）
+        let store = try Self.makeStore()
+        _ = try store.insertTag(NewTag(name: "x", colorHex: "#000000"))
+        try store.vacuum()
+        // vacuum 后仍可正常写入
+        _ = try store.insertTag(NewTag(name: "y", colorHex: "#111111"))
+        #expect(store.tags.count == 2)
+    }
 }

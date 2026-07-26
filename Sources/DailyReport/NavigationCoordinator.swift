@@ -33,10 +33,12 @@ enum AppTab: Int, CaseIterable, Identifiable {
 @Observable
 final class NavigationCoordinator {
     /// 当前选中的标签页（持久化到 UserDefaults，冷启动回到上次看的 tab）
-    var selectedTab: Int {
+    /// R20：Int → AppTab，类型安全，重排 tab 编译期检查，调用方不再需要 .rawValue
+    /// TabView 的 selection 仍需要 Hashable（AppTab 是 Int rawValue enum，自动 Hashable）
+    var selectedTab: AppTab {
         didSet {
             guard selectedTab != oldValue else { return }
-            UserDefaults.standard.set(selectedTab, forKey: AppState.Key.selectedTab)
+            UserDefaults.standard.set(selectedTab.rawValue, forKey: AppState.Key.selectedTab)
         }
     }
 
@@ -51,12 +53,12 @@ final class NavigationCoordinator {
     init() {
         // 合法范围由 AppTab 定义；越界（旧版本残留或手动改 plist）兜底回 .today
         let stored = UserDefaults.standard.integer(forKey: AppState.Key.selectedTab)
-        selectedTab = (AppTab(rawValue: stored) ?? .today).rawValue
+        selectedTab = AppTab(rawValue: stored) ?? .today
     }
 
     /// 跳转到「会议纪要」标签并打开指定会议的编辑表单
     func openMeetingEdit(_ meeting: MeetingRecord) {
         meetingRequest = MeetingRequest(meeting: meeting)
-        selectedTab = AppTab.meeting.rawValue
+        selectedTab = .meeting
     }
 }

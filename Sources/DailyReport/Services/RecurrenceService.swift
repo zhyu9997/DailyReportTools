@@ -63,10 +63,11 @@ enum RecurrenceService {
         // 加 createdAt 时间窗：只清 7 天前创建的，避免误删用户新建的同名一次性会议
         // （旧克隆逻辑在 v2 已移除，新版本不会产生这种残留；保留清理仅为兼容历史数据）
         //
-        // R19 收紧：原来「7 天前」的相对窗口会永远滚动，对 2026 年用户新建的同名空 summary
-        // 一次性会议（用户日常会这么命名）误删。加绝对过期日：2026-12-31 后整个清理块跳过，
-        // 避免对未来数据生效；存量 v1 升级用户在过期日之前已被清干净
-        let cleanupExpiry = Calendar.current.date(from: DateComponents(year: 2026, month: 12, day: 31))!
+        // R19 收紧：原来「7 天前」的相对窗口会永远滚动，对用户新建的同名空 summary
+        // 一次性会议（用户日常会这么命名）误删。加滚动过期窗：本函数首次执行日 + 6 个月内
+        // 才执行清理，覆盖存量 v1 升级用户的迁移期；之后跳过避免对未来数据生效
+        // （滚动而非写死绝对日期：app 长期运行不会过期失效）
+        let cleanupExpiry = Calendar.current.date(byAdding: .month, value: 6, to: Date())!
         guard startOfToday <= cleanupExpiry else { return }
         let residualCutoff = startOfToday.addingTimeInterval(-7 * 86_400)
         for m in meetings where !m.isRecurring

@@ -11,12 +11,13 @@
 - **目标用户**：需要每日记录工作内容、跟踪计划、复盘会议、生成周报的个人开发者 / 知识工作者
 - **核心价值闭环**：
   - **随手记** — 菜单栏图标 → 弹出面板 → 三秒落一条
-  - **全局看** — 主窗口五 Tab：概要 / 时间线 / 会议纪要 / 周报 / 待办（待办内嵌）
+  - **全局看** — 主窗口四 Tab：概要 / 时间线 / 会议纪要 / 周报（R19 已删独立的待办 Tab，TodoItem 模型保留作为后续扩展）
   - **自动汇总** — 周期推进（会议 + 计划任务）+ 周报导出（XLSX，按星期组织）
 - **设计原则**：
-  - 零第三方依赖（XLSX 自己写、ZIP 自己拼、备份 JSON 自己序列化）
+  - 极简第三方依赖（仅 GRDB.swift；XLSX / ZIP / JSON 备份 / 日志全自写）
   - 单条滚动记录（周期性会议/计划原地推进，不克隆历史；只有「完成」走克隆路径留痕）
   - 个人本地工具（不做多用户、不做云同步；数据安全靠 JSON 快照 + 自动备份兜底）
+  - 错误显式反馈（R14-R20：所有写操作走 view 内 `write { try ... }` helper + `WriteErrorAlertModifier` 统一暴露失败，杜绝 `store?.run` 吞 throws 导致 UI 假成功）
 
 ## 2. 整体架构
 
@@ -42,15 +43,14 @@ App 由三个 SwiftUI Scene 组成，共享同一个 `AppStore`（持有 GRDB `D
 
 1. **`AppLogger.migrateFromLegacyIfNeeded()`** — 一次性把日志从 `db/logs/` 迁到 app 同级 `logs/`（旧目录已空时一并删除）
 2. **`AppDatabase.openOrRecover()`** — 打开 / 迁移 GRDB 主库（三级容错链路，详见 9.6）
-   - 主库 `db/db.sqlite` 能打开 → 跑 `AppMigrator` 迁移（当前仅 `v1_initial`）→ 返回 `OpenResult(recovered: false)`
+   - 主库 `db/db.sqlite` 能打开 → 跑 `AppMigrator` 迁移（v1_initial + v2_unique_daily_report_date）→ 返回 `OpenResult(recovered: false)`
    - 主库失败 → `archiveCorruptedDB` 把 `db.sqlite{,-wal,-shm}` 整体移到 `db/corrupted/<ISO>/` → `snapshotToBackup` 用只读 GRDB 打开归档文件抢救 JSON（`salvage-*.json`）→ 主路径空库重建
    - 主路径仍失败 → 切到 `db/db.fallback.sqlite`（最后兜底）
    - 全部失败 → `fatalError`（极端情况）
 3. **`AppDatabase.pruneCorruptedArchives(keepCount: 5)`** — 清理 `db/corrupted/` 下旧归档，按 ISO 目录名字典序倒序保留最近 5 份
 4. **创建 `AppStore(dbQueue:)`** — 持有 `DatabaseQueue`，初始化只读快照（`reloadAll` 拉全表 + 关系映射）
 5. **启动 sweep**：
-   - `RecurrenceService.sweepMeetings(in: store)` — 周期会议推进 + 残留清理
-   - `RecurrenceService.sweepWorkEntries(in: store)` — 周期计划任务推进
+   - `RecurrenceService.sweepAll(in: store)` — 单事务推进周期会议 + 计划任务（R17 合并：原版分两次 `transactional` 调用存在「会议推进成功 + 计划失败」的部分提交风险，合并后任一失败整体回滚）
 6. **周备份 + 启动备份**：
    - `BackupService.weeklyBackupIfDue(in:)` — 周五~周日窗口：先清理上月 + 硬上限 12 份，再按「本周一」weekKey 写 `weekly-*.json`（已写过则跳过）
    - `BackupService.bootBackup(in:)` — 今日已写 weekly 时跳过；否则删今天的 `boot-*.json` 后重写一份
@@ -63,8 +63,8 @@ App 由三个 SwiftUI Scene 组成，共享同一个 `AppStore`（持有 GRDB `D
 - 所有视图通过 `@Environment(\.appStore)` 拿到 `AppStore`，直接读其只读快照属性（`entries / meetings / tags / ...` + 关系映射 `tagsByEntry / reviewsByMeeting / ...`），无 ViewModel 中间层
 - `AppStore` 是 `@Observable @MainActor`，快照属性 `private(set)`，外部只读；`reloadAll()` 后 SwiftUI 自动刷新
 - 写入统一走 `AppStore`：`insertXxx / updateXxx / deleteXxx / setXxxTags / markEntryDone / ...`。每个写方法内部调 `writeOrThrow` → `dbQueue.write`（同步事务）→ `reloadAll()` 触发 @Observable → UI 刷新
-- **View 层便捷入口 `store.run { try $0.xxx() }`**：吞掉 throws 并打 warn 日志，避免每个调用点写 `try?` 或 do/catch。适合「点按钮 / 拖拽 / 删除」等单向操作。需要拿到返回值或精确错误处理的场景（如 `getOrCreateReport` / Settings 的 restore）仍走 throws API
-- 内联编辑（会议概要等）使用本地 `@State` 草稿 + `.onChange` guard + `.onDisappear` 三重保险写回 store（GRDB 无 SwiftData autosave，必须显式调用 store 写方法）
+- **View 层写入口模式**（R14-R20 演进）：所有写操作在 view 内定义 `private func write(_ block: (AppStore) throws -> Void)` helper（或返回 Bool 的 `writeForDrop`），失败时把 `error.localizedDescription` 写入 `@State var writeError: String?`；body 末尾挂 `.writeErrorAlert($writeError)`（统一弹「写入失败」alert）。需要拿到返回值或精确错误处理的场景（如 `getOrCreateReport` / Settings 的 restore）仍直接走 throws API
+- 内联编辑（会议概要等）使用本地 `@State` 草稿 + `.onChange` guard + `.onDisappear` 三重保险写回 store（GRDB 无 SwiftData autosave，必须显式调用 store 写方法）；`MenuPanelView` 面板额外监听 `NSApplication.willResignActiveNotification` 兜底 flush（面板隐藏 ≠ view onDisappear）
 - 状态变量 `@State` 用于输入栏草稿、选中标签、折叠状态、内联编辑草稿等 UI 局部状态
 
 ## 3. 技术栈
@@ -85,10 +85,10 @@ App 由三个 SwiftUI Scene 组成，共享同一个 `AppStore`（持有 GRDB `D
 Sources/DailyReport/
 ├── DailyReportApp.swift           # @main，三 Scene + 启动 sweep + 跨日监听 + 容错链路
 ├── AppState.swift                 # 常量、UserDefaults Key、AppearanceMode 枚举
-├── NavigationCoordinator.swift    # 主窗口 Tab 选中态 + 跨页跳转请求
+├── NavigationCoordinator.swift    # 主窗口 Tab 选中态（AppTab enum）+ 跨页跳转请求
 ├── Database/                      # GRDB 持久层（6 文件）
 │   ├── Records.swift              # 6 主表 struct + 4 中间表 struct + 4 枚举 DatabaseValueConvertible + IntArrayJSON + 草稿（NewXxx）
-│   ├── Migrator.swift             # AppMigrator（v1_initial：6 主表 + 4 中间表 + 外键 CASCADE）
+│   ├── Migrator.swift             # AppMigrator（v1_initial + v2_unique_daily_report_date 去重 + UNIQUE 索引）
 │   ├── AppDatabase.swift          # 三级容错：openOrRecover / archiveCorruptedDB / snapshotToBackup / pruneCorruptedArchives
 │   ├── AppStore.swift             # @Observable @MainActor，持有 dbQueue，只读快照 + 集中写入口 + markEntryDone + truncateAll
 │   ├── RecordQueries.swift        # JOIN helper：fetchTagMap / fetchReviewsByMeeting
@@ -98,23 +98,25 @@ Sources/DailyReport/
 │   └── Recurrence.swift           # 周期计算纯函数（无 Model）
 ├── Views/
 │   ├── MainTabView.swift          # 4 Tab（概要/时间线/会议/周报），环境注入 coordinator
-│   ├── TodayView.swift            # 概要：统计条 + 今日记录 + 计划列表 + 会议
+│   ├── TodayView.swift            # 概要：统计条 + 今日记录 + 计划列表 + 会议（含 todayMeetingRow 内联概要编辑）
 │   ├── HistoryView.swift          # 时间线三列看板 + 搜索 + 拖拽 + 优先级/状态分组
-│   ├── TodoListView.swift         # 待办 + 计划任务统一操作
 │   ├── MeetingView.swift          # 会议列表 + 卡片 + 新增/编辑表单（ReviewDraft）
 │   ├── WeeklyReportView.swift     # 周报：按归属日分天 + 统计卡 + XLSX 导出
-│   ├── MenuPanelView.swift        # 菜单栏弹出面板
+│   ├── MenuPanelView.swift        # 菜单栏弹出面板（含 MeetingPanelRow 内联概要编辑）
 │   └── SettingsView.swift         # 设置：通用/提醒/数据/快捷键/关于
 ├── Components/
 │   ├── WorkSummaryView.swift      # WorkEntryCard（编辑/拖拽）+ WorkSummaryView（只读汇总）
 │   ├── TagPicker.swift            # 完整版 + 紧凑版 + ColorSwatchPicker
+│   ├── TagFilterMenu.swift        # 顶部标签筛选下拉菜单（R19 从 HistoryView 抽出复用）
+│   ├── WriteErrorAlert.swift      # ViewModifier：统一 .writeErrorAlert($writeError)（R20 抽出，7 处复用）
+│   ├── NewEntryDraft.swift        # @Bindable 草稿：HistoryView/MenuPanelView 共用（R19 抽出）
 │   ├── KindPicker.swift           # 完成/计划/问题 三色胶囊
 │   ├── RecurrenceEditor.swift     # 周期编辑（开关 + 单位 + 上下文选项）
 │   ├── FlowLayout.swift           # 自定义 Layout，标签自动换行
 │   ├── EmptyStateView.swift       # 大图标 + 标题 + 副标题
 │   └── SharedExtensions.swift     # Color(hex) / Date helpers / Calendar helpers
 └── Services/
-    ├── RecurrenceService.swift    # sweepMeetings + sweepWorkEntries（markDone 已并入 AppStore）
+    ├── RecurrenceService.swift    # sweepAll（单事务：sweepMeetings + sweepWorkEntries）
     ├── BackupService.swift        # Snapshot DTO + JSON 序列化 + atomic/weekly/boot 备份 + restore 单事务
     ├── AppLogger.swift            # error/warn/info/debug + 文件滚动 + NSLock + os.Logger 镜像
     ├── ExportService.swift        # 周报 XLSX + Markdown（旧路径，已不在 UI 暴露）
@@ -122,6 +124,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
+Tests/DailyReportTests/             # Swift Testing 套件，113 tests / 8 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -136,9 +139,10 @@ DailyReport 1───* Tag *───* WorkEntry     （通过 tag_daily_report
 
 - **Tag** 是中心枢纽，通过 4 张中间表与 DailyReport / WorkEntry / Meeting / TodoItem 建立多对多（复合主键 + 双向 `ON DELETE CASCADE`）
 - **Meeting → Review** 一对多，`review.meetingId` 外键 + `ON DELETE CASCADE`（会议删除连带评审）
-- **DailyReport** 仅存元数据，任务汇总由 `WorkEntry` 按「归属日」动态聚合，**不冗余存储**
-- 所有 Record 都是 `struct : FetchableRecord, MutablePersistableRecord, Identifiable`，主键 `id` 存为 `TEXT`（`UUID.uuidString`）。没有 `VersionedSchema`（GRDB 用 `DatabaseMigrator`，当前仅 `v1_initial`）
+- **DailyReport.date 加 UNIQUE 约束**（v2 迁移）：杜绝 `getOrCreateReport` 多窗口并发时的 TOCTOU 竞态产生重复行
+- 所有 Record 都是 `struct : FetchableRecord, MutablePersistableRecord, Identifiable`，主键 `id` 存为 `TEXT`（`UUID.uuidString`）。没有 `VersionedSchema`（GRDB 用 `DatabaseMigrator`，当前 `v1_initial` + `v2_unique_daily_report_date`）
 - 关系不直接持有：Record 里没有 `tags: [TagRecord]` / `reviews: [ReviewRecord]` 字段，而是由 `AppStore` 在 `reloadAll()` 时通过 `RecordQueries` 一次性 JOIN 拉取，暴露为 `tagsByEntry / reviewsByMeeting` 等关系映射字典
+- **CASCADE 在迁移期不生效**：GRDB `DatabaseMigrator.foreignKeysEnabled` 默认 false（防 schema 变更被 FK 拦截），任何依赖 CASCADE 的 migration 必须显式 DELETE 子表关系（v2 即如此）
 
 ### 5.2 WorkEntryRecord（核心实体：工作任务）
 
@@ -991,19 +995,50 @@ let package = Package(
 pkill -f DailyReport.app; sleep 1
 bash scripts/build-app.sh && open DailyReport.app
 
+# 跑测试（需 Xcode 工具链，CLT 不含 Swift Testing）
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+
 # 卸载
 rm -rf DailyReport.app
 ```
 
-## 14. 已知限制
+## 14. 测试套件
+
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，113 tests / 8 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+```
+
+### 14.1 各 Suite 职责
+
+| Suite | 用例数 | 覆盖点 |
+|---|---|---|
+| `AppStoreTests` | 22 | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + 关系重建（4 张中间表）+ CASCADE + transactional 回滚 + unknown id 静默 no-op + addReview FK 违规 + markEntryDone race 防御 + vacuum |
+| `MigratorTests` | 2 | v1→v2 升级路径：dedup（保最早 createdAt、合并非空 note、迁移 tag 关系）+ UNIQUE 约束生效；no-op on clean v1 |
+| `BackupServiceTests` | 19 | weekKey 计算（周一锚点）+ 各类 backup 文件存在性 + prune 策略 + decode 高版本/坏 JSON 拒绝 + Snapshot round-trip |
+| `BackupServiceIntegrationTests` | 4 | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + encode/decode 保留 recurrence 字段 |
+| `RecurrenceServiceTests` | 9 | sweepMeetings/sweepWorkEntries 各场景（逾期推进 / 今天保留 / 一次性会议保留 / 同主题残留清理）+ markDone 克隆下一期 / blocker → done / 已 done 的 race no-op |
+| `RecurrenceTests` | 21 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 |
+| `XLSXWriterTests` | 16 | XML 转义（4 实体 + 边界）+ 列字母转换（A-Z / AA-ZZ / AAA-ZZZ）+ CRC32 标准向量 |
+| `AppLoggerTests` | 7 | 日志滚动：未达上限 no-op / 创建 `.1` / 顺移现有文件 / 满槽删最旧 / maxBytes=0 立即滚 / keepCount=1 直删原文件 |
+
+### 14.2 测试模式约定
+
+- **in-memory GRDB**：每个测试 `makeStore()` 起一份新的 `DatabaseQueue(configuration:) + AppMigrator.makeMigrator().migrate(queue)`，互不污染；`@MainActor` 标注符合 AppStore 主线程隔离
+- **tmp 目录隔离文件系统测试**：`BackupServiceTests` 用 `FileManager.temporaryDirectory.appendingPathComponent("DailyReportTests-\(UUID())")` 每测一建一删
+- **raw queue 测试不标 @MainActor**：`MigratorTests` 直接 `queue.write/read` 构造 v1 fixture，无 AppStore 包装；`@MainActor` 会让 `queue.write { }` 报 "expression is async"（GRDB 闭包跨 actor）
+- **fixture 用 Date 而非 ISO8601 字符串**：GRDB `.datetime` 列内部用毫秒精度 ISO8601，与 `ISO8601DateFormatter` 字符串不等价；fixture INSERT 必须 `arguments: [day]`（Date），否则 `WHERE date = ?` 永远 miss
+
+## 15. 已知限制
 
 - **数据目录与 app 同级**：`db/` / `dbbackup/` / `logs/` 都在 `DailyReport.app` 旁边，整包移动即携带；但也意味着拖动 `.app` 到废纸篓不会自动清理这些目录，需手动删除。
 - **SMAppService 签名要求**：ad-hoc 签名在大多数 macOS 版本能注册登录项，个别版本可能拒绝；失败时开关自动回滚 + 蜂鸣，回退到系统设置手动加登录项。
 - **导出**：当前仅 UI 暴露周报 XLSX（带星期列，按完成日排序）。概要/时间线的历史 Markdown/CSV 导出入口已移除（代码路径保留，未在 UI 暴露）。
 - **无云同步**：纯本地 GRDB SQLite；跨设备需手动 JSON 导出/导入。
-- **无 VersionedSchema**：schema 变更通过 GRDB `DatabaseMigrator` 显式注册迁移（当前仅 `v1_initial`）；主库损坏靠归档 + JSON 抢救 + 空库重建兜底（个人工具的权衡）。
+- **无 VersionedSchema**：schema 变更通过 GRDB `DatabaseMigrator` 显式注册迁移（当前 `v1_initial` + `v2_unique_daily_report_date`）；主库损坏靠归档 + JSON 抢救 + 空库重建兜底（个人工具的权衡）。
 
-## 15. 未来可能扩展（未实现）
+## 16. 未来可能扩展（未实现）
 
 - iCloud 同步（CloudKit + NSPersistentCloudKitContainer / SwiftData cloud sync）
 - AI 周报总结（基于周内 WorkEntry + Meeting summary 生成草稿）

@@ -52,14 +52,7 @@ struct WorkEntryCard: View {
         } message: {
             Text("「\(entry.title)」将被删除，可在设置页从最近备份恢复。")
         }
-        .alert("写入失败", isPresented: Binding(
-            get: { writeError != nil },
-            set: { if !$0 { writeError = nil } }
-        )) {
-            Button("好", role: .cancel) { writeError = nil }
-        } message: {
-            Text(writeError ?? "")
-        }
+        .writeErrorAlert($writeError)
     }
 
     /// 统一的写入口包装：失败时弹 alert 反馈给用户，而不是 store.run 静默吞 throws

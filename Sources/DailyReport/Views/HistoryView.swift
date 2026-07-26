@@ -158,14 +158,7 @@ struct HistoryView: View {
                     filterTag = nil
                 }
             }
-            .alert("写入失败", isPresented: Binding(
-                get: { writeError != nil },
-                set: { if !$0 { writeError = nil } }
-            )) {
-                Button("好", role: .cancel) { writeError = nil }
-            } message: {
-                Text(writeError ?? "")
-            }
+            .writeErrorAlert($writeError)
         }
     }
 
