@@ -60,39 +60,61 @@ final class ReminderService {
         // 但 Task 闭包内访问 self.pendingReschedule 与 self.currentAuthorizationStatus() 依赖隔离边界，
         // 显式标注让并发语义不依赖编译器版本变化
         pendingReschedule = Task { @MainActor in
-            // enabled=false：用户在 app 内关闭 → 无条件 remove pending，不再 add
-            guard !Task.isCancelled, enabled else {
-                if Task.isCancelled { return }
-                center.removePendingNotificationRequests(withIdentifiers: [identifier])
-                return
-            }
-            // enabled=true：先查权限，再决定 remove + add 还是只 remove
+            // R22-A：决策逻辑抽到 Self.decision，便于单测三分支
+            // （UNUserNotificationCenter.current() 是单例无法注入，但决策树本身是纯函数）
             let status = await self.currentAuthorizationStatus()
             guard !Task.isCancelled else { return }
-            if status == .denied {
-                // 系统层拒绝：不 remove（保留旧 pending 让权限恢复时还能触发），不 add（add 也会被系统丢）
-                // 这是与「先 remove 再 add」的关键差异：denied 状态下不会让用户彻底失去提醒
+            let action = Self.decision(enabled: enabled, status: status)
+            switch action {
+            case .none:
                 return
-            }
-            center.removePendingNotificationRequests(withIdentifiers: [identifier])
+            case .removeOnly:
+                center.removePendingNotificationRequests(withIdentifiers: [identifier])
+            case .removeAndAdd:
+                center.removePendingNotificationRequests(withIdentifiers: [identifier])
+                let content = UNMutableNotificationContent()
+                content.title = "该写日报啦 ✍️"
+                content.body = "花两分钟记录今天的工作吧。"
+                content.sound = .default
 
-            let content = UNMutableNotificationContent()
-            content.title = "该写日报啦 ✍️"
-            content.body = "花两分钟记录今天的工作吧。"
-            content.sound = .default
+                var comps = DateComponents()
+                comps.hour = hour
+                comps.minute = minute
 
-            var comps = DateComponents()
-            comps.hour = hour
-            comps.minute = minute
-
-            let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
-            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-            do {
-                try await center.add(request)
-            } catch {
-                // add 失败（如系统级触发数上限）至少 warn，避免完全静默
-                AppLogger.warn("ReminderService.center.add 失败：\(error)")
+                let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
+                let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+                do {
+                    try await center.add(request)
+                } catch {
+                    // add 失败（如系统级触发数上限）至少 warn，避免完全静默
+                    AppLogger.warn("ReminderService.center.add 失败：\(error)")
+                }
             }
         }
+    }
+
+    /// R22-A：抽出 reschedule 的决策树为纯函数。
+    /// 三分支：
+    /// - `enabled=false`：用户在 app 内关闭 → `.removeOnly`（无条件 remove pending，不再 add）
+    /// - `enabled=true + status == .denied`：系统层拒绝 → `.none`（不 remove 保留旧 pending，
+    ///   等用户重新打开通知权限后旧提醒自然复活；add 也会被系统丢）
+    /// - `enabled=true + status != .denied`：`.removeAndAdd`（remove 旧 + add 新）
+    ///
+    /// 抽出的目的：决策树是纯逻辑无副作用，但被包在依赖 `UNUserNotificationCenter` 单例的
+    /// `reschedule` 里无法直接测。抽出后可在单测里直接验证三分支的正确性
+    nonisolated static func decision(enabled: Bool, status: UNAuthorizationStatus) -> Decision {
+        if !enabled { return .removeOnly }
+        if status == .denied { return .none }
+        return .removeAndAdd
+    }
+
+    /// reschedule 决策结果（用于测试断言；运行时由 reschedule 内部消费）
+    enum Decision: Equatable {
+        /// 什么都不做（保留旧 pending，等权限恢复）
+        case none
+        /// 只移除旧 pending，不添加新提醒
+        case removeOnly
+        /// 移除旧 pending 后添加新提醒
+        case removeAndAdd
     }
 }

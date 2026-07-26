@@ -147,20 +147,61 @@ enum AppMigrator {
             }
             try db.create(index: "uq_daily_report_date", on: "daily_report", columns: ["date"], unique: true)
         }
-        // v3：给 4 张多对多中间表的 owner 列加索引
-        // 原版只有复合主键索引 (tagId, ownerId)，反向按 ownerId 查（fetchTagMap 的 ownerColumn）
-        // 走全表扫描。数据量上来后（如几千个 entry × 几个 tag = 数万行）每次 reloadAll
-        // 都会全扫 4 次。加 owner 列索引后 reload 性能从 O(N×表数) 降到 O(log N×表数)
-        // 安全：CREATE INDEX 是纯增量操作，不改数据，不会丢字段
-        m.registerMigration("v3_indexes_on_tag_link_owners") { db in
-            try db.create(index: "idx_tag_daily_report_reportId",
-                          on: "tag_daily_report", columns: ["reportId"])
-            try db.create(index: "idx_tag_todo_todoId",
-                          on: "tag_todo", columns: ["todoId"])
-            try db.create(index: "idx_tag_work_entry_entryId",
-                          on: "tag_work_entry", columns: ["entryId"])
-            try db.create(index: "idx_tag_meeting_meetingId",
-                          on: "tag_meeting", columns: ["meetingId"])
+        // v4：tag.name 加 UNIQUE 约束，防多窗口并发建同名 tag 产生重复
+        // （AppStore.getOrCreateTag 之前只有应用层 fetchOne → insert 的 TOCTOU 检查，
+        //  两个窗口同时建同名 tag 会各自 insert 一条，应用层不会自动合并）
+        // 存量库可能有重复 name：保留最早创建的（createdAt 升序），合并 4 张中间表关系到 keeper
+        m.registerMigration("v4_unique_tag_name") { db in
+            // 找出所有重复 name（不区分大小写：SQLite COLLATE NOCASE 默认对 .text 列生效）
+            // 但 UNIQUE 索引默认大小写敏感，这里用 binary name 一致才视为重复（与 AppStore 路径一致）
+            let dupNames = try String.fetchAll(db,
+                sql: "SELECT name FROM tag GROUP BY name HAVING COUNT(*) > 1")
+            for name in dupNames {
+                let rows = try Row.fetchAll(db,
+                    sql: "SELECT id FROM tag WHERE name = ? ORDER BY createdAt ASC",
+                    arguments: [name])
+                guard rows.count > 1 else { continue }
+                let keepId: String = rows[0]["id"]
+                let orphanIds: [String] = rows.dropFirst().map { $0["id"] }
+                // 4 张中间表：把孤儿行的 tag 关系迁移到 keeper（INSERT OR IGNORE 避免复合主键冲突）
+                for orphanId in orphanIds {
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO tag_daily_report (tagId, reportId)
+                        SELECT ?, reportId FROM tag_daily_report WHERE tagId = ?
+                        """, arguments: [keepId, orphanId])
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO tag_todo (tagId, todoId)
+                        SELECT ?, todoId FROM tag_todo WHERE tagId = ?
+                        """, arguments: [keepId, orphanId])
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO tag_work_entry (tagId, entryId)
+                        SELECT ?, entryId FROM tag_work_entry WHERE tagId = ?
+                        """, arguments: [keepId, orphanId])
+                    try db.execute(sql: """
+                        INSERT OR IGNORE INTO tag_meeting (tagId, meetingId)
+                        SELECT ?, meetingId FROM tag_meeting WHERE tagId = ?
+                        """, arguments: [keepId, orphanId])
+                }
+                // 显式清理孤儿在 4 张中间表的残留关系。
+                // 不能依赖 ON DELETE CASCADE：GRDB DatabaseMigrator 默认 foreignKeysEnabled=false
+                // （v2 已踩过这个坑），迁移期间 CASCADE 不触发，残留关系会让后续运行时 FK 检查失败
+                for orphanId in orphanIds {
+                    try db.execute(sql: "DELETE FROM tag_daily_report WHERE tagId = ?",
+                                   arguments: [orphanId])
+                    try db.execute(sql: "DELETE FROM tag_todo WHERE tagId = ?",
+                                   arguments: [orphanId])
+                    try db.execute(sql: "DELETE FROM tag_work_entry WHERE tagId = ?",
+                                   arguments: [orphanId])
+                    try db.execute(sql: "DELETE FROM tag_meeting WHERE tagId = ?",
+                                   arguments: [orphanId])
+                }
+                // 删除孤儿 tag 行（中间表关系已显式清理，无需依赖 CASCADE）
+                for orphanId in orphanIds {
+                    try db.execute(sql: "DELETE FROM tag WHERE id = ?",
+                                   arguments: [orphanId])
+                }
+            }
+            try db.create(index: "uq_tag_name", on: "tag", columns: ["name"], unique: true)
         }
         return m
     }

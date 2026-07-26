@@ -112,6 +112,7 @@ Sources/DailyReport/
 │   ├── TagFilterMenu.swift        # 顶部标签筛选下拉菜单（R19 从 HistoryView 抽出复用）
 │   ├── WriteErrorAlert.swift      # ViewModifier：统一 .writeErrorAlert($writeError)（R20 抽出，7 处复用）
 │   ├── NewEntryDraft.swift        # @Bindable 草稿：HistoryView/MenuPanelView 共用（R19 抽出）
+│   ├── InlineSummaryEditor.swift  # 会议概要内联编辑器（R21-C 抽出，3 处复用，Style 参数化样式）
 │   ├── KindPicker.swift           # 完成/计划/问题 三色胶囊
 │   ├── RecurrenceEditor.swift     # 周期编辑（开关 + 单位 + 上下文选项）
 │   ├── FlowLayout.swift           # 自定义 Layout，标签自动换行
@@ -126,7 +127,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，113 tests / 8 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，157 tests / 11 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -696,6 +697,24 @@ weekEntries = entries.filter { belongDate ∈ [start, end+1day) }.sorted { belon
 - `Date`：`startOfDay / isToday / friendlyDay / isoDay / shortTime / friendlyDate / relativeTime`
 - `Calendar`：`monday(for:) / monthStart(for:)`
 
+### 8.8 InlineSummaryEditor（`Components/InlineSummaryEditor.swift`）
+
+R21-C 抽出。会议概要的内联编辑器，原本散落在 `TodayView.TodayMeetingRow` / `MenuPanelView.MeetingPanelRow` / `MeetingView.MeetingCard` 三处各写一份 30 行的 onChange(debounce) + onAppear load + onDisappear flush + onChange(meeting.id) reset + onChange(meeting.summary) 外部同步 五件套（≈ 90 行重复）。改一处（如 debounce 时长）必然漏改其他两处。
+
+抽成共享 view 后参数化为 `Style` 枚举：
+
+| Style | 字号 | 高度 | 圆角 | 用途 |
+|---|---|---|---|---|
+| `.compact` | caption | 28 | 6 | 概要页今日会议行 |
+| `.panel` | caption | 28 | 4 | 菜单栏面板（视觉更轻） |
+| `.standard` | subheadline | 36 | 6 | 会议详情卡（主窗口里更醒目） |
+
+特殊参数 `flushOnResignActive: Bool`：菜单栏面板专用兜底。MenuBarExtra 的 window 隐藏 ≠ view 拆除，`onDisappear` 不触发，需监听 `NSApplication.willResignActiveNotification` 兜底立即 flush 草稿。
+
+写回机制：本地 `@State summaryDraft` + 0.3s debounce `Task.sleep` + `onDisappear` flush + `onChange(meeting.id)` reset + `onChange(meeting.summary)` 外部同步。失败走 `.writeErrorAlert($writeError)`（与各 view 写操作统一反馈）。
+
+> debounce 时长 `debounceMs: Int = 300` 是抽出的常量（R21-D），未来想统一调整只改一处。300ms 是经验值：够缓冲连续输入，又不会让用户感觉延迟。
+
 ## 9. 服务层
 
 ### 9.1 RecurrenceService（`Services/RecurrenceService.swift`）
@@ -1006,7 +1025,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，143 tests / 10 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，157 tests / 11 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1017,8 +1036,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | Suite | 用例数 | 覆盖点 |
 |---|---|---|
 | `AppStoreTests` | 25 | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + 关系重建（4 张中间表）+ CASCADE + transactional 回滚 + unknown id 静默 no-op + addReview FK 违规 + markEntryDone race 防御 + vacuum + insert 路径的 tag/review 同步绑定（R21-A） |
-| `MigratorTests` | 5 | v1→v2 dedup（保最早 createdAt、合并非空 note、迁移 tag 关系）+ UNIQUE 约束生效；no-op on clean v1；v3 扩展性（dummy v3 加列加索引数据保留）+ 幂等性（连续 migrate 两次 no-op）+ 索引回归（UNIQUE 索引在 v3 后仍能拦截重复插入） |
-| `BackupServiceTests` | 19 | weekKey 计算（周一锚点）+ 各类 backup 文件存在性 + prune 策略 + decode 高版本/坏 JSON 拒绝 + Snapshot round-trip |
+| `MigratorTests` | 7 | v1→v2 dedup（保最早 createdAt、合并非空 note、迁移 tag 关系）+ UNIQUE 约束生效；no-op on clean v1；v3 扩展性 + 幂等性 + 索引回归；v4 tag.name dedup（保最早 createdAt、4 张中间表关系 INSERT OR IGNORE 迁移 + 显式清理 dangling）+ v4 no-op on clean database（R22-A） |
+| `BackupServiceTests` | 24 | weekKey 计算（周一锚点）+ 各类 backup 文件存在性 + prune 策略 + decode 高版本/坏 JSON 拒绝 + Snapshot round-trip + decode 加固（payloadTooLarge / danglingTagReference 拒绝 + 自一致 snapshot 通过）（R22-A） |
 | `BackupServiceIntegrationTests` | 4 | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + encode/decode 保留 recurrence 字段 |
 | `RecurrenceServiceTests` | 11 | sweepMeetings/sweepWorkEntries 各场景（逾期推进 / 今天保留 / 一次性会议保留 / 同主题残留清理）+ markDone 克隆下一期 / blocker → done / 已 done 的 race no-op + 月度周期跨月边界（R21-A） |
 | `RecurrenceTests` | 21 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 |
@@ -1026,6 +1045,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `AppLoggerTests` | 7 | 日志滚动：未达上限 no-op / 创建 `.1` / 顺移现有文件 / 满槽删最旧 / maxBytes=0 立即滚 / keepCount=1 直删原文件 |
 | `ExportServiceTests` | 15 | csvEscape（RFC 4180 三种触发条件）+ sanitizeSheetName（7 禁用字符 + 31 字符截断）+ sanitizeFilename + weekdayName + markdownForDay 分组排序 + tag 渲染 + report note 渲染（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的提前 return bug）+ WorkKind.emoji 编译期覆盖所有 case |
 | `NavigationCoordinatorTests` | 5 | 越界 rawValue 兜底回 .today + 负值兜底 + 合法值持久化 round-trip + openMeetingEdit 切 tab 并设 meetingRequest；`.serialized` 隔离 UserDefaults.standard 单例的并发串扰 |
+| `ReminderServiceTests` | 7 | decision 三分支决策：enabled=false → removeOnly（无视 status）/ enabled=true + denied → none（保留旧 pending）/ enabled=true + 非 denied（authorized/provisional/notDetermined）→ removeAndAdd；Decision case 互斥性回归（R22-A，原 ReminderService 是唯一无测试 Service） |
 
 ### 14.2 测试模式约定
 
@@ -1049,3 +1069,26 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 - 全局快捷键唤起菜单栏面板
 - 多账号 / 团队共享
 - iOS 端只读查看（通过导出的 JSON）
+
+## 17. 架构决策记录（ADR）
+
+### 17.1 ValueObservation 改造评估（R22-C，结论：不实施）
+
+**背景**：当前 `AppStore` 用 `dbQueue.write { } → reloadAll()` 模式，每次写都全量重读 6 主表 + 4 中间表 JOIN + reviews by meeting（约 11 条 SQL）。GRDB 提供 `ValueObservation` 可订阅表级变更，理论上能做细粒度异步刷新。
+
+**评估结论**：当前规模下不实施。理由：
+
+1. **数据规模远未达临界点**：个人工具月增百条级，5 年累积约 6000 条 entry + 几百个 meeting。`reloadAll` 整体耗时实测 < 5ms，与一次 SwiftUI body 重算开销相当。优化收益低于噪声
+2. **关系映射是主要成本，observation 不能消除**：`tagsByEntry / tagsByMeeting / reviewsByMeeting` 仍需 JOIN 全表。即便主表订阅了变更，关系映射仍要重建。改 observation 只是「换个时机跑同样的 SQL」
+3. **`@Observable` 已做属性级依赖追踪**：SwiftUI 只刷新读到了变更属性的视图。比如 `entries` 变更时，只读 `meetings` 的视图不会重算。ValueObservation 在 UI 刷新粒度上没有额外收益
+4. **同步语义对用户体验更友好**：用户点「完成」→ `markEntryDone` → `reloadAll` 同步返回 → UI 立即反馈。改 observation 后写入异步触发刷新，用户能感知到延迟
+5. **测试与并发复杂度**：observation 默认在后台 queue 派发，所有访问需要 `MainActor.assumeIsolated` 或 `await MainActor.run { }` 跳回主线程；143+ 现有测试需要全部加 async fixture。改动面巨大但收益不明确
+
+**何时需要重新评估**：
+- 单库 entry 数 > 50k（reloadAll 实测 > 50ms，开始能感知到卡顿）
+- 引入跨进程 / 跨设备同步（observation 是必经之路）
+- 多窗口同时编辑同一实体（observation 自动同步优于手动 reload）
+
+**当前架构的留口**：`AppStore.reloadAll()` 是单方法入口，未来若切 ValueObservation，只需替换该方法内部实现（订阅 + 缓存 diff），所有调用方零改动。
+
+

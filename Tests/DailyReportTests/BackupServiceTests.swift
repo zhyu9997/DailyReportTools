@@ -223,6 +223,94 @@ import Foundation
         }
     }
 
+    // MARK: - decode 加固（R22-A 新增：payloadTooLarge / danglingTagReference）
+
+    @Test func decodeRejectsPayloadAboveHardLimit() throws {
+        // 100 MB 全是空格的 JSON：data.count 超过 maxBytes（100 * 1024 * 1024）应抛 payloadTooLarge
+        // 不实际分配 100 MB（测试会很慢），改用 decoder 入口前就拒绝的边界：
+        // 构造一个 data.count = maxBytes + 1 的 Data
+        let limit = 100 * 1024 * 1024
+        let oversized = Data(count: limit + 1)
+        #expect(throws: BackupService.DecodeError.self) {
+            _ = try BackupService.decode(oversized)
+        }
+    }
+
+    @Test func decodeRejectsDanglingTagReference() throws {
+        // report 引用了一个不存在的 tagId（备份被外部编辑 / 截断过的典型表现）
+        let phantomTag = UUID()
+        let json = """
+        {
+          "schemaVersion": 1,
+          "exportedAt": "2026-07-26T10:00:00Z",
+          "tags": [],
+          "reports": [
+            {
+              "id": "\(UUID().uuidString)",
+              "date": "2026-07-26T00:00:00Z",
+              "note": "",
+              "createdAt": "2026-07-26T00:00:00Z",
+              "updatedAt": "2026-07-26T00:00:00Z",
+              "tagIds": ["\(phantomTag.uuidString)"]
+            }
+          ],
+          "todos": [], "entries": [], "meetings": [], "reviews": []
+        }
+        """
+        let data = json.data(using: .utf8)!
+        #expect(throws: BackupService.DecodeError.self) {
+            _ = try BackupService.decode(data)
+        }
+    }
+
+    @Test func decodeAcceptsSelfConsistentSnapshot() throws {
+        // 反向回归：tag 存在且被引用时不应抛 danglingTagReference
+        let tagId = UUID()
+        let json = """
+        {
+          "schemaVersion": 1,
+          "exportedAt": "2026-07-26T10:00:00Z",
+          "tags": [
+            {
+              "id": "\(tagId.uuidString)",
+              "name": "T",
+              "colorHex": "#000000",
+              "createdAt": "2026-07-26T00:00:00Z"
+            }
+          ],
+          "reports": [
+            {
+              "id": "\(UUID().uuidString)",
+              "date": "2026-07-26T00:00:00Z",
+              "note": "",
+              "createdAt": "2026-07-26T00:00:00Z",
+              "updatedAt": "2026-07-26T00:00:00Z",
+              "tagIds": ["\(tagId.uuidString)"]
+            }
+          ],
+          "todos": [], "entries": [], "meetings": [], "reviews": []
+        }
+        """
+        let data = json.data(using: .utf8)!
+        let snap = try BackupService.decode(data)
+        #expect(snap.tags.count == 1)
+        #expect(snap.reports.first?.tagIds == [tagId])
+    }
+
+    @Test func payloadTooLargeErrorDescriptionCarriesSizes() throws {
+        let err = BackupService.DecodeError.payloadTooLarge(found: 200 * 1024 * 1024, limit: 100 * 1024 * 1024)
+        let msg = err.errorDescription ?? ""
+        // 用户文案要带 MB 数，便于排障
+        #expect(msg.contains("MB"))
+    }
+
+    @Test func danglingTagReferenceErrorDescriptionCarriesId() throws {
+        let id = UUID()
+        let err = BackupService.DecodeError.danglingTagReference(missingTagId: id)
+        let msg = err.errorDescription ?? ""
+        #expect(msg.contains(id.uuidString))
+    }
+
     // MARK: - pruneOldBackups（按文件名 ISO 排序，cp/tar 后不会误判）
 
     @Test func pruneOldBackupsKeepsNewestByIso() throws {

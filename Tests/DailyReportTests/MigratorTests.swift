@@ -325,4 +325,164 @@ import GRDB
             }
         }
     }
+
+    // MARK: - v4：tag.name UNIQUE 约束（R22-A 新增）
+
+    /// v4 升级时合并重复 tag.name：保留最早创建的，4 张中间表关系迁移到 keeper
+    /// 模拟多窗口并发建同名 tag 的 TOCTOU 产物（应用层 dedup 漏判）
+    @Test func v4MigrationDedupesTagsAndMergesLinkTableRelations() throws {
+        let queue = try Self.makeV1Queue()
+        let t1 = Date()
+        let t2 = t1.addingTimeInterval(10)
+        let t3 = t1.addingTimeInterval(20)
+
+        // 3 个同名 tag（" 工作 "），createdAt 各不同
+        let keepId  = "KKKKKKKK-0000-0000-0000-00000000KKKK"   // 最早，应被保留
+        let orphA   = "AAAAAAAA-0000-0000-0000-00000000AAAA"
+        let orphB   = "BBBBBBBB-0000-0000-0000-00000000BBBB"   // 最晚，应被删
+        try queue.write { db in
+            try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                           arguments: [keepId, "工作", "#111111", t1])
+            try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                           arguments: [orphA, "工作", "#222222", t2])
+            try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                           arguments: [orphB, "工作", "#333333", t3])
+            // 一个独立 tag 验证不受影响
+            try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                           arguments: ["DDDDDDDD-0000-0000-0000-00000000DDDD", "其他", "#444444", t1])
+        }
+
+        // 造关系：orphA 绑到 report，orphB 绑到 entry 和 meeting，keep 本身已有 report 关系
+        // 验证迁移后 keeper 上聚合了所有孤儿的关系（INSERT OR IGNORE 防复合主键冲突）
+        let report1 = "R1R1R1R1-0000-0000-0000-000000R1R1R1"
+        let report2 = "R2R2R2R2-0000-0000-0000-000000R2R2R2"
+        let entry1  = "E1E1E1E1-0000-0000-0000-000000E1E1E1"
+        let meeting1 = "M1M1M1M1-0000-0000-0000-000000M1M1M1"
+        try queue.write { db in
+            // report + entry + meeting 主表先插，避免 FK 拦截
+            try db.execute(sql: """
+                INSERT INTO daily_report (id, date, note, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)
+                """, arguments: [report1, Date(), "", t1, t1])
+            try db.execute(sql: """
+                INSERT INTO daily_report (id, date, note, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)
+                """, arguments: [report2, Date().addingTimeInterval(86400), "", t2, t2])
+            try db.execute(sql: """
+                INSERT INTO work_entry (id, title, detail, timestamp, kindRaw, finishDate, helper,
+                                         blockerStatusRaw, priorityRaw, isRecurring,
+                                         recurrenceUnitRaw, recurrenceInterval,
+                                         recurrenceWeekdays, recurrenceMonthDays, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [entry1, "T", "", Date(), "完成", nil, nil,
+                                "Ongoing", "Medium", false, "每天", 1, "[]", "[]", t1])
+            try db.execute(sql: """
+                INSERT INTO meeting (id, topic, summary, timestamp, createdAt, isRecurring,
+                                     recurrenceUnitRaw, recurrenceInterval,
+                                     recurrenceWeekdays, recurrenceMonthDays)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [meeting1, "M", "", Date(), t1, false, "每天", 1, "[]", "[]"])
+            // keeper 已有 report1 关系
+            try db.execute(sql: "INSERT INTO tag_daily_report (tagId, reportId) VALUES (?, ?)",
+                           arguments: [keepId, report1])
+            // orphA 也有 report1（与 keeper 重复，INSERT OR IGNORE 应忽略）
+            // orphA 还有 report2（独有，应迁移到 keeper）
+            try db.execute(sql: "INSERT INTO tag_daily_report (tagId, reportId) VALUES (?, ?)",
+                           arguments: [orphA, report1])
+            try db.execute(sql: "INSERT INTO tag_daily_report (tagId, reportId) VALUES (?, ?)",
+                           arguments: [orphA, report2])
+            // orphB 绑到 entry1 和 meeting1（都独有，应迁移到 keeper）
+            try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
+                           arguments: [orphB, entry1])
+            try db.execute(sql: "INSERT INTO tag_meeting (tagId, meetingId) VALUES (?, ?)",
+                           arguments: [orphB, meeting1])
+        }
+
+        // 跑完整 migrator（含 v4）
+        try AppMigrator.makeMigrator().migrate(queue)
+
+        // 1) tag 表只剩 1 行 "工作"，且是 keeper（colorHex 是 keeper 的 #111111）
+        let keptColor: String = try queue.read { db in
+            try String.fetchOne(db, sql: "SELECT colorHex FROM tag WHERE name = ?", arguments: ["工作"]) ?? ""
+        }
+        #expect(keptColor == "#111111")
+
+        // 2) 孤儿已被删
+        let orphanCount: Int = try queue.read { db in
+            try Int.fetchOne(db,
+                sql: "SELECT COUNT(*) FROM tag WHERE id IN (?, ?, ?)",
+                arguments: [keepId, orphA, orphB]) ?? 0
+        }
+        // keeper 还在，orphA/B 已删
+        #expect(orphanCount == 1)
+
+        // 3) keeper 在 tag_daily_report 上聚合了 report1（去重后 1 条）+ report2（迁移过来 1 条）
+        let keeperReports: Set<String> = try queue.read { db in
+            try Set(String.fetchAll(db,
+                sql: "SELECT reportId FROM tag_daily_report WHERE tagId = ?",
+                arguments: [keepId]))
+        }
+        #expect(keeperReports == [report1, report2])
+
+        // 4) keeper 在 tag_work_entry 上有 entry1（从 orphB 迁移）
+        let keeperEntries: Set<String> = try queue.read { db in
+            try Set(String.fetchAll(db,
+                sql: "SELECT entryId FROM tag_work_entry WHERE tagId = ?",
+                arguments: [keepId]))
+        }
+        #expect(keeperEntries == [entry1])
+
+        // 5) keeper 在 tag_meeting 上有 meeting1（从 orphB 迁移）
+        let keeperMeetings: Set<String> = try queue.read { db in
+            try Set(String.fetchAll(db,
+                sql: "SELECT meetingId FROM tag_meeting WHERE tagId = ?",
+                arguments: [keepId]))
+        }
+        #expect(keeperMeetings == [meeting1])
+
+        // 6) 中间表里 tagId 列不应再出现 orphA / orphB（防止残留 dangling 关系）
+        let danglingReport: Int = try queue.read { db in
+            try Int.fetchOne(db,
+                sql: "SELECT COUNT(*) FROM tag_daily_report WHERE tagId IN (?, ?)",
+                arguments: [orphA, orphB]) ?? 0
+        }
+        #expect(danglingReport == 0)
+
+        // 7) UNIQUE 索引存在：再插一个同名 tag 应抛约束错误
+        #expect(throws: Error.self) {
+            try queue.write { db in
+                try db.execute(sql: """
+                    INSERT INTO tag (id, name, colorHex, createdAt)
+                    VALUES (?, ?, ?, ?)
+                    """, arguments: ["NEWNEWNE-0000-0000-0000-00000000NEWN", "工作", "#999999", Date()])
+            }
+        }
+    }
+
+    /// v4 在无重复 tag 的库上应是 no-op（保留所有原数据）
+    @Test func v4MigrationNoOpOnCleanDatabase() throws {
+        let queue = try Self.makeV1Queue()
+        let t1 = Date()
+        try queue.write { db in
+            try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                           arguments: ["TTTTTTTT-0000-0000-0000-00000000TTTT", "alpha", "#111111", t1])
+            try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                           arguments: ["UUUUUUUU-0000-0000-0000-00000000UUUU", "beta", "#222222", t1])
+        }
+
+        try AppMigrator.makeMigrator().migrate(queue)
+
+        let count: Int = try queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tag") ?? 0
+        }
+        #expect(count == 2)
+
+        // UNIQUE 索引已建：插同名 tag 应抛错
+        #expect(throws: Error.self) {
+            try queue.write { db in
+                try db.execute(sql: """
+                    INSERT INTO tag (id, name, colorHex, createdAt)
+                    VALUES (?, ?, ?, ?)
+                    """, arguments: ["VVVVVVVV-0000-0000-0000-00000000VVVV", "alpha", "#333333", Date()])
+            }
+        }
+    }
 }

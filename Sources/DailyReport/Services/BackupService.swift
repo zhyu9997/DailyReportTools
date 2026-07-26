@@ -138,6 +138,13 @@ enum BackupService {
     }
 
     nonisolated static func decode(_ data: Data) throws -> Snapshot {
+        // R22-A：硬上限防御恶意 / 损坏的大文件
+        // 个人工具合理备份 < 5 MB；超过 100 MB 几乎一定是异常（损坏的 JSON / 攻击构造）
+        // 不限制时 decoder 会试图把整个数组展开到内存，可能 OOM
+        let maxBytes: Int = 100 * 1024 * 1024
+        guard data.count <= maxBytes else {
+            throw DecodeError.payloadTooLarge(found: data.count, limit: maxBytes)
+        }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let snap = try decoder.decode(Snapshot.self, from: data)
@@ -147,17 +154,36 @@ enum BackupService {
             throw DecodeError.unsupportedSchemaVersion(
                 found: snap.schemaVersion, supported: currentSchemaVersion)
         }
+        // R22-A：基本完整性检查：tag id 在所有引用里应存在
+        // restore 路径用 INSERT 写中间表，未声明的 tagId 会让 FK 检查失败（生产路径 FK 已开）
+        // 提前在 decode 阶段抛错，避免半完成 restore（虽然有 pre-import 快照兜底，但更早失败更友好）
+        let tagIds = Set(snap.tags.map { $0.id })
+        let referentTagIds = snap.reports.flatMap(\.tagIds)
+            + snap.todos.flatMap(\.tagIds)
+            + snap.entries.flatMap(\.tagIds)
+            + snap.meetings.flatMap(\.tagIds)
+        if let missing = referentTagIds.first(where: { !tagIds.contains($0) }) {
+            throw DecodeError.danglingTagReference(missingTagId: missing)
+        }
         return snap
     }
 
     /// decode / restore 阶段的明确错误类型（UI 层可据此给出对应提示）
     enum DecodeError: LocalizedError {
         case unsupportedSchemaVersion(found: Int, supported: Int)
+        case payloadTooLarge(found: Int, limit: Int)
+        case danglingTagReference(missingTagId: UUID)
 
         var errorDescription: String? {
             switch self {
             case .unsupportedSchemaVersion(let found, let supported):
                 return "备份文件 schemaVersion=\(found) 高于本程序支持的 \(supported)，可能由更新版本生成。请升级 app 后再导入，以免数据错位丢失。"
+            case .payloadTooLarge(let found, let limit):
+                let foundMB = String(format: "%.1f", Double(found) / 1_048_576)
+                let limitMB = String(format: "%.0f", Double(limit) / 1_048_576)
+                return "备份文件过大（\(foundMB) MB > 上限 \(limitMB) MB），疑似损坏或被篡改。请联系开发者排查。"
+            case .danglingTagReference(let missingTagId):
+                return "备份内容不一致：实体引用了不存在的 tag（id=\(missingTagId)）。可能备份文件被截断或外部编辑过。"
             }
         }
     }
