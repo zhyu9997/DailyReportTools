@@ -161,6 +161,47 @@ import Foundation
         #expect(!md.contains("### 备注"))
     }
 
+    // MARK: - R41-A: markdownForDay kind 分组 + 空 detail + 无 tag 分支
+    // markdownForDay 已有 5 个测试，但 group.isEmpty continue 分支（某 kind 无 entry 跳过该标题）、
+    // detail.isBlank true 分支（空 detail 不输出缩进行）、tags.isEmpty true 分支（无 tag 不拼 ·）
+    // 从未直接断言。改 filter 逻辑（如漏 kind filter）会让缺失 kind 也输出空标题
+    @Test func markdownForDayOmitsKindHeaderWhenNoEntryOfThatKind() {
+        // 只传 done 的 entries，期望 markdown 里有「完成」标题，没有「计划」/「问题」标题
+        let entries = [
+            TestEntry.entry(id: UUID(), title: "唯一完成", detail: "", kind: .done, timestamp: Date()),
+        ]
+        let data = ExportService.DayData(day: Date(), entries: entries, report: nil, tagsByEntry: [:])
+        let md = ExportService.markdownForDay(data)
+        #expect(md.contains(WorkKind.done.rawValue))
+        #expect(!md.contains(WorkKind.planned.rawValue))
+        #expect(!md.contains(WorkKind.blocker.rawValue))
+    }
+
+    @Test func markdownForDayOmitsDetailLineWhenBlank() {
+        // detail="" 时 isBlank=true，不应输出 4 空格缩进的 detail 行
+        let entries = [
+            TestEntry.entry(id: UUID(), title: "T", detail: "", kind: .done, timestamp: Date()),
+        ]
+        let data = ExportService.DayData(day: Date(), entries: entries, report: nil, tagsByEntry: [:])
+        let md = ExportService.markdownForDay(data)
+        let lines = md.components(separatedBy: "\n")
+        // 不应存在「4 空格缩进 + 非空内容」的行（detail 渲染格式）
+        let hasIndentedDetailLine = lines.contains {
+            $0.hasPrefix("    ") && !$0.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        #expect(!hasIndentedDetailLine)
+    }
+
+    @Test func markdownForDayOmitsTagSeparatorWhenEntryHasNoTags() {
+        // tagsByEntry 为空字典 / entry 不在字典里 → 不应出现 `·` 分隔符
+        let entries = [
+            TestEntry.entry(id: UUID(), title: "T", detail: "", kind: .done, timestamp: Date()),
+        ]
+        let data = ExportService.DayData(day: Date(), entries: entries, report: nil, tagsByEntry: [:])
+        let md = ExportService.markdownForDay(data)
+        #expect(!md.contains("·"))
+    }
+
     // MARK: - R39-H: todoCSVRow 纯函数单测
     // exportTodosCSV 原版 25 行把字段格式化 + csvEscape + 拼接混在一起，绑死 NSSavePanel 无法单测。
     // 抽出 todoCSVRow 后可钉死：nil → 空串 / isDone → "是" / tags 走 csvEscape / 字段顺序

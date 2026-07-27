@@ -133,6 +133,29 @@ import Foundation
         #expect(result.tagIds == [t1.id, t2.id])
     }
 
+    // MARK: - R41-L: consume 保留 selectedTags 顺序
+    // consume 第 38 行 `selectedTags.map(\.id)`：顺序保留语义未被钉死。
+    // 如果有人误改成 `Set(selectedTags).map(\.id)`（去重 + 乱序），
+    // 用户选的 tag 顺序会在 consume 后乱掉，导出/显示顺序不可预期
+    @Test func consumePreservesSelectedTagsOrderAgainstNaturalSort() {
+        // 故意用 UUID 字典序倒序的 tag（第三个 UUID 字符串最小，字典序会排在前面）
+        let t1 = TagRecord(id: UUID(uuidString: "FFFFFFAA-0000-0000-0000-000000000001")!,
+                            name: "a", colorHex: "#000000", createdAt: Date())
+        let t2 = TagRecord(id: UUID(uuidString: "BBBBBBBB-0000-0000-0000-000000000002")!,
+                            name: "b", colorHex: "#000000", createdAt: Date())
+        let t3 = TagRecord(id: UUID(uuidString: "11111111-0000-0000-0000-000000000003")!,
+                            name: "c", colorHex: "#000000", createdAt: Date())
+        var draft = NewEntryDraft()
+        draft.title = "T"
+        // 传入顺序 t1 → t2 → t3（与 UUID 字典序相反）
+        draft.selectedTags = [t1, t2, t3]
+
+        let result = draft.consume()
+
+        // 必须保持传入顺序，不按 UUID 字典序重排
+        #expect(result.tagIds == [t1.id, t2.id, t3.id])
+    }
+
     @Test func resetClearsTransientButKeepsKindAndRecurrenceInterval() {
         var draft = NewEntryDraft()
         draft.title = "用完即弃"

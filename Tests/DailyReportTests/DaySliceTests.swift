@@ -143,4 +143,58 @@ import Foundation
         #expect(DaySlice.plannedSort(earlier, later) == true)
         #expect(DaySlice.plannedSort(later, earlier) == false)
     }
+
+    // MARK: - R41-D: contains(entry:) blocker 分支 + done finishDate=nil fallback
+    // 原测试只覆盖 done 有 finishDate / planned 有 finishDate / meeting 边界。
+    // done 分支 `e.finishDate ?? e.timestamp` 的 nil fallback 与 blocker 分支（按 timestamp）
+    // 从未直接覆盖。done 任务用户没填 finishDate 时应回退 timestamp 判定归属日
+    @Test func containsEntryDoneFallsBackToTimestampWhenFinishDateNil() {
+        let today = Self.makeDate(2026, 7, 27, 14, 0)
+        let slice = DaySlice(anchor: today)
+        let e = Self.makeEntry(kind: .done, timestamp: today, finishDate: nil)
+        #expect(slice.contains(entry: e))
+    }
+
+    @Test func containsEntryDoneWithNilFinishDateOutsideDayRejected() {
+        let today = Self.makeDate(2026, 7, 27, 14, 0)
+        let yesterday = Self.makeDate(2026, 7, 26, 14, 0)
+        let slice = DaySlice(anchor: today)
+        let e = Self.makeEntry(kind: .done, timestamp: yesterday, finishDate: nil)
+        #expect(!slice.contains(entry: e))
+    }
+
+    @Test func containsEntryBlockerMatchesByTimestampToday() {
+        // blocker 按记录时间归属（无 finishDate 概念），原 DaySliceTests 零覆盖 blocker 分支
+        let today = Self.makeDate(2026, 7, 27, 14, 0)
+        let slice = DaySlice(anchor: today)
+        let e = Self.makeEntry(kind: .blocker, timestamp: today)
+        #expect(slice.contains(entry: e))
+    }
+
+    @Test func containsEntryBlockerYesterdayRejected() {
+        let today = Self.makeDate(2026, 7, 27, 14, 0)
+        let yesterday = Self.makeDate(2026, 7, 26, 14, 0)
+        let slice = DaySlice(anchor: today)
+        let e = Self.makeEntry(kind: .blocker, timestamp: yesterday)
+        #expect(!slice.contains(entry: e))
+    }
+
+    // MARK: - R41-E: isTodayPlanned finishDate=nil fallback 分支
+    // isTodayPlanned 有两个分支：finishDate 非 nil 走逾期判定（已测），nil 走 timestamp 在 [start,end)。
+    // planned 任务没有 finishDate 时（用户创建但未排期），应回退到 timestamp 落在今天
+    @Test func isTodayPlannedWithNilFinishDateUsesTimestampToday() {
+        let today = Self.makeDate(2026, 7, 27, 9, 0)
+        let slice = DaySlice(anchor: today)
+        let e = Self.makeEntry(kind: .planned, timestamp: today, finishDate: nil)
+        #expect(slice.isTodayPlanned(e))
+        #expect(slice.contains(entry: e))
+    }
+
+    @Test func isTodayPlannedWithNilFinishDateYesterdayRejected() {
+        let today = Self.makeDate(2026, 7, 27, 9, 0)
+        let yesterday = Self.makeDate(2026, 7, 26, 9, 0)
+        let slice = DaySlice(anchor: today)
+        let e = Self.makeEntry(kind: .planned, timestamp: yesterday, finishDate: nil)
+        #expect(!slice.isTodayPlanned(e))
+    }
 }

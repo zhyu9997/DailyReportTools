@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，368 tests / 32 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，388 tests / 33 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，368 tests / 32 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，388 tests / 33 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1042,13 +1042,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `RecurrenceTests` | 29 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 + base 在未来时 interval 不影响返回（R29-D）+ weekdayLong 1...7 双字映射 + 越界返回 ? + 与 weekdaySymbol 同源数据一致性（R35-F）+ weekdaySymbol 越界直接覆盖（0/8/-1 返回 ?）+ 1...7 单字非空（R37-G，原仅靠 weekdayLong 间接覆盖）+ label 空 weekdays/monthDays 返回纯前缀分支（guard !isEmpty else { return prefix }，interval>1 仍走前缀分支不退化）（R40-D） |
 | `XLSXWriterTests` | 22 | XML 转义（4 实体 + 边界）+ 列字母转换（A-Z / AA-ZZ / AAA-ZZZ）+ CRC32 标准向量 + dosDateTime 边界（year<1980 clamp + 正常位打包 + 1980-01-01 边界）（R37-F，原 private 改 internal 直覆边界分支） |
 | `AppLoggerTests` | 7 | 日志滚动：未达上限 no-op / 创建 `.1` / 顺移现有文件 / 满槽删最旧 / maxBytes=0 立即滚 / keepCount=1 直删原文件 |
-| `ExportServiceTests` | 23 | csvEscape（RFC 4180 三种触发条件）+ sanitizeSheetName（7 禁用字符 + 31 字符截断）+ sanitizeFilename + weekdayName + markdownForDay 分组排序 + tag 渲染 + report note 渲染（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的提前 return bug）+ WorkKind.emoji 编译期覆盖所有 case + todoCSVRow 纯函数（nil 渲染空串 / isDone→"是" / tags 走 csvEscape）（R39-H，原 25 行 exportTodosCSV 抽出）+ doneEntriesSorted 过滤 + 归属日排序（done 通过 / planned+blocker 过滤掉 / finishDate ?? timestamp fallback）（R40-G，原 exportWeekDoneXLSX 内联 filter+sort 抽出） |
+| `ExportServiceTests` | 26 | csvEscape（RFC 4180 三种触发条件）+ sanitizeSheetName（7 禁用字符 + 31 字符截断）+ sanitizeFilename + weekdayName + markdownForDay 分组排序 + tag 渲染 + report note 渲染（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的提前 return bug）+ WorkKind.emoji 编译期覆盖所有 case + todoCSVRow 纯函数（nil 渲染空串 / isDone→"是" / tags 走 csvEscape）（R39-H，原 25 行 exportTodosCSV 抽出）+ doneEntriesSorted 过滤 + 归属日排序（done 通过 / planned+blocker 过滤掉 / finishDate ?? timestamp fallback）（R40-G，原 exportWeekDoneXLSX 内联 filter+sort 抽出）+ markdownForDay 三分支（缺失 kind 不输出标题 / 空 detail 不输出缩进行 / 无 tag 不输出 · 分隔符）（R41-A） |
 | `NavigationCoordinatorTests` | 5 | 越界 rawValue 兜底回 .today + 负值兜底 + 合法值持久化 round-trip + openMeetingEdit 切 tab 并设 meetingRequest；`.serialized` 隔离 UserDefaults.standard 单例的并发串扰；`@MainActor` 标注匹配 R24-H 的 NavigationCoordinator 主线程隔离 |
 | `ReminderServiceTests` | 7 | decision 三分支决策：enabled=false → removeOnly（无视 status）/ enabled=true + denied → none（保留旧 pending）/ enabled=true + 非 denied（authorized/provisional/notDetermined）→ removeAndAdd；Decision case 互斥性回归（R22-A，原 ReminderService 是唯一无测试 Service） |
-| `NewEntryDraftTests` | 9 | canSubmit 拒空/拒纯空白 + consume 三分支（done/planned/blocker）的字段条件赋值（finishDate / helper / recurring / priority / blockerStatus）+ tagIds 映射 + reset 保留 kind/recurrenceUnit/recurrenceInterval（R24-F） |
-| `DaySliceTests` | 8 | contains(entry:) done 按 finishDate 归属 / planned 逾期归入今日 / planned 未来 finishDate 不归入 / contains(meeting:) 跨午夜边界（23:59 归今日、00:00 归次日）/ plannedSort 优先级 + finishDate 组合排序（R30-D，原 DaySlice 是 R24-B 抽出的核心组件，View/Store 共用，零测试覆盖）+ plannedSort 同优先级一侧 finishDate=nil fallback 到 timestamp + 两侧都 nil 纯 timestamp 比较（R40-E，原仅覆盖两侧都有 finishDate 的路径） |
+| `NewEntryDraftTests` | 10 | canSubmit 拒空/拒纯空白 + consume 三分支（done/planned/blocker）的字段条件赋值（finishDate / helper / recurring / priority / blockerStatus）+ tagIds 映射 + reset 保留 kind/recurrenceUnit/recurrenceInterval（R24-F）+ consume 保留 selectedTags 顺序（防误改 `Set(...).map` 重排导致 UI/导出顺序乱）（R41-L） |
+| `DaySliceTests` | 14 | contains(entry:) done 按 finishDate 归属 / planned 逾期归入今日 / planned 未来 finishDate 不归入 / contains(meeting:) 跨午夜边界（23:59 归今日、00:00 归次日）/ plannedSort 优先级 + finishDate 组合排序（R30-D，原 DaySlice 是 R24-B 抽出的核心组件，View/Store 共用，零测试覆盖）+ plannedSort 同优先级一侧 finishDate=nil fallback 到 timestamp + 两侧都 nil 纯 timestamp 比较（R40-E，原仅覆盖两侧都有 finishDate 的路径）+ contains(entry:) blocker 分支（今日归属 / 昨日排除）+ done finishDate=nil fallback timestamp（R41-D）+ isTodayPlanned finishDate=nil fallback timestamp（今日归属 / 昨日排除）（R41-E） |
 | `AppStateTests` | 3 | migrateLegacyKeysIfNeeded 三分支：legacy 有值 + new 缺失 → 拷贝（5 对 key 类型保真：Bool/Int/Int/String/Int）/ new 已存在 → 不覆盖（保用户后续修改）/ 双方都没值 → 无副作用 no-op（R31-G，原启动期一次性迁移零覆盖，误改「总是覆盖」会丢用户设置） |
-| `RecordQueriesTests` | 11 | fetchTagMap 三分支：空中间表返 [:] / 单 owner 多 tag 按中间表插入顺序保留（不重排为 createdAt）/ tagId 在传入 allTagsById 找不到时静默跳过（R32-C，原仅靠 AppStoreTests 集成间接覆盖，无直接断言钉死顺序与 dangling 兜底）+ insertTagLinks INSERT 路径参数化 4 个 TagLinkTable + 空 tagIds 幂等（R36-D）+ TagLinkTable.ownerColumn 直接覆盖（非空 + 互斥）（R38-C）+ fetchReviewsByMeeting 三分支（空表 / 多 review 按 order+createdAt 升序 / meetingId=nil 孤儿跳过）（R38-A）+ TagLinkTable.rawValue 与对应 Record.databaseTableName 一致性参数化（R39-K） |
+| `RecordQueriesTests` | 13 | fetchTagMap 三分支：空中间表返 [:] / 单 owner 多 tag 按中间表插入顺序保留（不重排为 createdAt）/ tagId 在传入 allTagsById 找不到时静默跳过（R32-C，原仅靠 AppStoreTests 集成间接覆盖，无直接断言钉死顺序与 dangling 兜底）+ insertTagLinks INSERT 路径参数化 4 个 TagLinkTable + 空 tagIds 幂等（R36-D）+ TagLinkTable.ownerColumn 直接覆盖（非空 + 互斥）（R38-C）+ fetchReviewsByMeeting 三分支（空表 / 多 review 按 order+createdAt 升序 / meetingId=nil 孤儿跳过）（R38-A）+ TagLinkTable.rawValue 与对应 Record.databaseTableName 一致性参数化（R39-K）+ replaceTagLinks DELETE+INSERT 原子性（replace ≠ append，先清后插）+ 空数组清空全部旧关系（R41-M） |
 | `IntArrayJSONTests` | 4 | encode/decode round-trip + 空数组 / decode(nil) 返 [] / decode 坏 JSON（截断 / 类型错 / 完全非 JSON）返 []（R32-D，WorkEntryRecord/MeetingRecord 的 recurrenceWeekdays/recurrenceMonthDays 持久化通道，原 R23-G 加的兜底无回归测试） |
 | `IsOverdueTests` | 8 | WorkEntryRecord.isOverdue：done/blocker/planned 无 finishDate 永远 false + planned 昨天 true + planned 今天 false（边界，按 startOfDay 严格 <）/ TodoItemRecord.isOverdue：isDone / dueDate nil / dueDate 过去三分支（R32-E，原 5+ 处 UI 视觉判断无测试钉死） |
 | `ColorHexTests` | 12 | 6 位带 # / 6 位不带 # / 含空白被 trim → 成功；3 位短格式（CSS 标准 #FFF）/ 空串 / 仅 # / 非 hex 字符 / 错误长度（5/7 位）→ 失败（R32-F，TagRecord.swiftUIColor 与 ColorSwatchPicker 的核心解析，原零覆盖，钉死「3 位短格式不支持」语义防误改）+ hexString round-trip（defaultPalette 8 个 + 纯 RGB）+ TagPickerPalette 全可解析 + defaultHex=first 契约（R38-D/H） |
@@ -1057,12 +1057,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `CalendarMondayTests` | 5 | monday(for:) 五分支：输入即周一 / 周中 / 周日（系统 firstWeekday=1 仍归上一周周一，注释里踩过的坑）/ 跨月 / 跨年（R34-D，BackupService.weekKey 8 个测试已间接覆盖，但 monday(for:) 本身零测试钉死「强制 firstWeekday=2」语义） |
 | `SpawnNextTests` | 3 | WorkEntryRecord.spawnNext 三分支：isRecurring=false → nil / kind != .planned → nil（done / blocker 两个 case）/ 正常克隆 14 字段 + 新 id + finishDate 推进（R35-A，markEntryDone 调用的核心纯函数零测试覆盖） |
 | `BelongDateTests` | 5 | WeeklyReportView.belongDate 五分支：done/planned → finishDate ?? timestamp（finishDate 缺失走 timestamp 兜底）/ blocker → timestamp（即使有 finishDate 也不用，与 done/planned 的关键差异）（R35-B，周报聚合的核心判定零测试） |
-| `SweepWorkEntriesTests` | 4 | RecurrenceService.sweepWorkEntries 四分支：未逾期 skip / 逾期推进（finishDate 不再逾期）/ 非 recurring skip / blocker 即使 recurring 也 skip（R35-H，sweepMeetings 已有 R25-F 测试，sweepWorkEntries 是对称分支却长期黑盒） |
+| `SweepWorkEntriesTests` | 5 | RecurrenceService.sweepWorkEntries 四分支：未逾期 skip / 逾期推进（finishDate 不再逾期）/ 非 recurring skip / blocker 即使 recurring 也 skip（R35-H，sweepMeetings 已有 R25-F 测试，sweepWorkEntries 是对称分支却长期黑盒）+ recurring planned finishDate=nil skip（防误改成 timestamp 推进导致无 finishDate 任务原地循环推进）（R41-G） |
 | `DateFormatTests` | 13 | Date.isoDay/startOfDay/isToday/shortTime/friendlyDay/friendlyDate/relativeTime 等格式化器直接单测，含同年省略年份 + 跨年显示年份 + 未来时间走 shortTime + 5 秒前返回「刚刚」（R36-B，原本零直接覆盖；ExportService 文件名 / WeeklyReportView 标题 / BackupService.weekKey fallback 全依赖这些派生属性）+ relativeTime 缺失分支补齐（分钟前 / 小时前 / 昨天 / 跨年，R38-F） |
 | `EnumDisplayTests` | 15 | WorkKind icon/emoji 非空 + emoji 互斥 + blocker 时 color 委派 BlockerStatus；BlockerStatus localizedName 非空 + 互斥；Priority localizedName 非空 + 互斥 + sortOrder high→low；RecurrenceUnit rawValue 非空 + 互斥（R37-A，原 4 个 UI 数据源枚举的展示属性零覆盖，改错任一项 UI 静默错乱无编译期信号）+ WorkKind.color(status:) 全 9 组合参数化（blocker 委托 status，done/planned 忽略 status 参数契约）（R40-H） |
 | `AppearanceModeTests` | 6 | colorScheme 三分支：system→nil（跟随系统）/ light→.light / dark→.dark；localizedName 非空 + 互斥；allCases 覆盖 system+light+dark（R37-D，原 Settings 页外观切换唯一数据源零覆盖，colorScheme 改错整个 app 深浅色错乱） |
 | `AppTabTests` | 6 | 4 tab 的 title / systemImage 非空 + 互斥；allCases 覆盖 4 tab；rawValue 互斥 + 连续 0...3（UserDefaults 持久化 key 保真）（R37-E，原 MainTabView 标签数据源零覆盖，删 case UI 静默缺一项） |
 | `RecordDerivedTests` | 2 | WorkEntryRecord.day / MeetingRecord.day = Calendar.current.startOfDay(for: timestamp)（按天聚合分组键，ExportService / DaySlice / WeeklyReportView 共依赖；R38-L，原零覆盖，改错会让所有按天聚合错位） |
+| `InlineSummaryEditorTests` | 7 | InlineSummaryEditor.Style 6 派生属性（minHeight/cornerRadius/textPaddingH/placeholderPaddingH/placeholderPaddingV/font）显式 case 断言：compact/panel 共用 caption 字体 + 共享紧凑尺寸（minHeight=28/cornerRadius 6|4/textPaddingH=2/placeholder=6,5），standard 独用 subheadline + 放大尺寸（minHeight=36/cornerRadius=6/textPaddingH=4/placeholder=8,7）（R41-K，3 处调用点概要/菜单栏/会议详情卡的视觉一致性契约，原零覆盖） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1106,6 +1107,14 @@ R40-F `BackupService.insertSnapshot` 从 private 改 internal，在已有 `Backu
 R40-G 抽 `ExportService.doneEntriesSorted(_:)` 纯函数（原 exportWeekDoneXLSX 内联 filter+sort），在已有 `ExportServiceTests` 追加 3 用例（done 通过 / planned+blocker 过滤 / finishDate ?? timestamp 升序 + nil fallback），ExportServiceTests 用例数 20 → 23。归属日语义是周报按完成日分天的核心，原绑死 NSSavePanel 无法单测。
 R40-H 在已有 `EnumDisplayTests` 追加 3 参数化用例（blockerColorDelegatesToStatusForAllCases × 3 status + doneColorIgnoresStatusParameter × 3 + plannedColorIgnoresStatusParameter × 3），EnumDisplayTests 用例数 12 → 15。原 workKindColorDelegatesToBlockerStatusWhenBlocker 只覆盖 ongoing+closed 两个 status，done/planned 不传 status 无法验证「忽略」契约。
 R40-J 在已有 `RecordMappingTests` 追加 3 用例（TagRecord.swiftUIColor 非法 hex fallback .accentColor + 空 hex fallback + 合法 hex round-trip 走 hexString），RecordMappingTests 用例数 8 → 11。`Color(hex:) ?? .accentColor` 兜底是 UI 不崩的关键，原零覆盖。
+
+R41-A 在已有 `ExportServiceTests` 追加 3 用例（markdownForDay 缺失某 kind 不输出对应标题 / 空 detail 不输出 4 空格缩进行 / 无 tag 不输出 · 分隔符），ExportServiceTests 用例数 23 → 26。原测试覆盖了「分组排序」但 3 个渲染细节分支（kind 缺失 / detail 空 / tag 空）从未钉死。
+R41-D 在已有 `DaySliceTests` 追加 2 用例（contains(entry:) blocker 分支：今日归属 / 昨日排除 + done finishDate=nil fallback timestamp 归属今日），DaySliceTests 用例数 8 → 10。原 done 分支只覆盖 finishDate 非 nil 路径，blocker 分支零覆盖。
+R41-E 在已有 `DaySliceTests` 追加 2 用例（isTodayPlanned finishDate=nil fallback timestamp 今日归属 / 昨日 timestamp 排除），DaySliceTests 用例数 10 → 12。planned finishDate=nil 是「无截止日的计划任务」常见路径。
+R41-G 在已有 `SweepWorkEntriesTests` 追加 1 用例（recurring planned finishDate=nil skip，不推进），SweepWorkEntriesTests 用例数 4 → 5。nextRecurrenceDate 对 nil finishDate fallback Date() 会导致每秒都「逾期」，sweepWorkEntries 守住 top-level skip 避免原地循环。
+R41-K 新建 `InlineSummaryEditorTests` 7 用例（InlineSummaryEditor.Style 6 派生属性：minHeight/cornerRadius/textPaddingH/placeholderPaddingH/placeholderPaddingV/font，3 个 case 显式断言），InlineSummaryEditorTests 用例数 0 → 7。3 处调用点（概要 / 菜单栏面板 / 会议详情卡）共享 Style enum，改任一派生属性会让 3 处视觉同时错乱且无编译期信号。
+R41-L 在已有 `NewEntryDraftTests` 追加 1 用例（consume 保留 selectedTags 顺序：UUID 字典序倒序传入 3 个 tag，结果保持传入顺序），NewEntryDraftTests 用例数 9 → 10。selectedTags.map(\.id) 一旦误改成 Set(...).map 会去重 + 乱序，UI/导出顺序不可预期。
+R41-M 在已有 `RecordQueriesTests` 追加 2 用例（replaceTagLinks DELETE+INSERT 原子性：insert 3 → replace 2 → 只剩 2 不是 append 到 5 + 空数组清空全部旧关系），RecordQueriesTests 用例数 11 → 13。replace 不是 append 语义从未直接测，原仅靠 setEntryTags 间接路过。
 
 ### 14.2 测试模式约定
 

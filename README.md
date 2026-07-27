@@ -50,7 +50,7 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**368 tests / 32 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**388 tests / 33 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
@@ -65,10 +65,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `AppearanceModeTests` (6) | colorScheme 三分支 + localizedName 非空/互斥（R37-D） |
 | `AppTabTests` (6) | 4 tab title/systemImage 非空/互斥 + rawValue 连续 0...3（R37-E） |
 | `AppLoggerTests` (7) | 文件滚动各场景 |
-| `ExportServiceTests` (23) | csvEscape / sanitizeSheetName / sanitizeFilename / weekdayName / markdownForDay 分组排序与 note 兜底（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的 bug）+ WorkKind.emoji 编译期覆盖所有 case + doneEntriesSorted 过滤 + 归属日排序（finishDate ?? timestamp fallback）（R40-G） |
+| `ExportServiceTests` (26) | csvEscape / sanitizeSheetName / sanitizeFilename / weekdayName / markdownForDay 分组排序与 note 兜底（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的 bug）+ WorkKind.emoji 编译期覆盖所有 case + doneEntriesSorted 过滤 + 归属日排序（finishDate ?? timestamp fallback）（R40-G）+ markdownForDay kind 分组（缺失 kind 不输出标题）+ 空 detail 不输出缩进行 + 无 tag 不输出 · 分隔符（R41-A） |
 | `NavigationCoordinatorTests` (5) | 越界 rawValue 兜底回 .today + 持久化 round-trip + openMeetingEdit 切 tab（`.serialized` 隔离 UserDefaults 单例串扰） |
 | `ReminderServiceTests` (7) | decision 三分支决策：disabled → removeOnly / enabled + denied → none（保旧 pending）/ enabled + 非 denied → removeAndAdd；Decision case 互斥性 |
-| `NewEntryDraftTests` (9) | NewEntryDraft.canSubmit（标题空/分类非法）+ consume 三种 kind 派发 + reset 回默认 |
+| `NewEntryDraftTests` (10) | NewEntryDraft.canSubmit（标题空/分类非法）+ consume 三种 kind 派发 + reset 回默认 + consume 保留 selectedTags 顺序（UUID 字典序倒序传入不重排）（R41-L） |
 | `AppDatabaseTests` (9) | archiveCorruptedDB 三件套归档 + 同秒冲突 -2 后缀 + README 含 reason + 源缺失 no-op；pruneCorruptedArchives 保留最新 N + 上限内 no-op + 目录缺失 no-op；IntegrityError.description 含 label + message + 前缀（R38-J） |
 
 View 层不测（SwiftUI 视图组合靠人工验证）。

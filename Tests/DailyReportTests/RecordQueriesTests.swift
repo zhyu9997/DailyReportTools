@@ -294,4 +294,74 @@ import GRDB
         }
         #expect(link.rawValue == expected)
     }
+
+    // MARK: - R41-M: replaceTagLinks DELETE+INSERT 原子性 + 空数组清空
+    // replaceTagLinks 已通过 AppStore.setEntryTags 等间接覆盖，但「replace 不是 append」语义
+    // 从未直接测。setEntryTags 内部还包了 reloadAll，失败时无法定位是 replaceTagLinks 还是包装层。
+    // 直接调 replaceTagLinks 钉死：DELETE WHERE 清旧 → INSERT 新（非 append）
+    @Test func replaceTagLinksDeletesOldBeforeInsert() throws {
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+        let ownerId = UUID()
+        let oldTags = [UUID(), UUID(), UUID()]
+        let newTags = [UUID(), UUID()]
+        try queue.write { db in
+            for (idx, tid) in (oldTags + newTags).enumerated() {
+                try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                               arguments: [tid.uuidString, "t\(idx)", "#000000", Date()])
+            }
+            try db.execute(sql: """
+                INSERT INTO work_entry (id, title, detail, timestamp, kindRaw, finishDate, helper,
+                                        blockerStatusRaw, priorityRaw, isRecurring,
+                                        recurrenceUnitRaw, recurrenceInterval,
+                                        recurrenceWeekdays, recurrenceMonthDays, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                           arguments: [ownerId.uuidString, "x", "", Date(), "done", nil, nil,
+                                       "Ongoing", "Medium", false, "Daily", 1, "[]", "[]", Date()])
+            // 先 insert 3 个旧 tag
+            try RecordQueries.insertTagLinks(db, link: .workEntry, ownerId: ownerId, tagIds: oldTags)
+            // 再 replace 成 2 个新 tag
+            try RecordQueries.replaceTagLinks(db, link: .workEntry, ownerId: ownerId, tagIds: newTags)
+        }
+        let rows: [(UUID, UUID)] = try queue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT tagId, entryId FROM tag_work_entry")
+            return rows.map { (UUID(uuidString: $0["tagId"] as String)!, UUID(uuidString: $0["entryId"] as String)!) }
+        }
+        // 只剩 newTags（DELETE 清掉 oldTags 后 INSERT newTags，不是 append 累加到 5）
+        #expect(rows.count == 2)
+        let remainingTagIds = Set(rows.map { $0.0 })
+        #expect(remainingTagIds == Set(newTags))
+        #expect(rows.map { $0.1 }.allSatisfy { $0 == ownerId })
+    }
+
+    @Test func replaceTagLinksClearsAllWhenEmptyTagIds() throws {
+        // replace 传空数组 → DELETE 清空所有旧关系（INSERT 空数组 no-op）
+        // 这是 setEntryTags([]) 的底层路径，用户「移除全部标签」时触发
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+        let ownerId = UUID()
+        let tags = [UUID(), UUID()]
+        try queue.write { db in
+            for (idx, tid) in tags.enumerated() {
+                try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                               arguments: [tid.uuidString, "t\(idx)", "#000000", Date()])
+            }
+            try db.execute(sql: """
+                INSERT INTO work_entry (id, title, detail, timestamp, kindRaw, finishDate, helper,
+                                        blockerStatusRaw, priorityRaw, isRecurring,
+                                        recurrenceUnitRaw, recurrenceInterval,
+                                        recurrenceWeekdays, recurrenceMonthDays, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                           arguments: [ownerId.uuidString, "x", "", Date(), "done", nil, nil,
+                                       "Ongoing", "Medium", false, "Daily", 1, "[]", "[]", Date()])
+            try RecordQueries.insertTagLinks(db, link: .workEntry, ownerId: ownerId, tagIds: tags)
+            try RecordQueries.replaceTagLinks(db, link: .workEntry, ownerId: ownerId, tagIds: [])
+        }
+        let count = try queue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tag_work_entry")!
+        }
+        #expect(count == 0)
+    }
 }

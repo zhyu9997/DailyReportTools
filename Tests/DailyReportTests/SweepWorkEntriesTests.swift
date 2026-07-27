@@ -128,4 +128,27 @@ import GRDB
         let after = try store.read { try WorkEntryRecord.fetchOne($0, key: rec.id.uuidString) }
         #expect(after?.finishDate == yesterday, "blocker 不参与 sweep（语义：问题是已发生事件，无周期推进）")
     }
+
+    // MARK: - R41-G: sweepWorkEntries finishDate=nil 跳过分支
+    // guard 第一个条件 `guard let f = e.finishDate` 为 nil 时直接 continue。
+    // 原有 4 个测试都给 finishDate（未来 / 昨天 / 昨天非 recurring / 昨天 blocker），
+    // finishDate=nil 的 planned+recurring 任务从未覆盖（理论上 planned 不该没 finishDate，
+    // 但 DB 允许 + 历史数据可能残留）。nil 时应静默跳过，不 crash / 不误推进
+    @Test func skipsRecurringPlannedWhenFinishDateIsNil() throws {
+        let store = try Self.makeStore()
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: Date())
+        var rec = makeEntry(kind: .planned, isRecurring: true, finishDate: nil,
+                             unit: .daily, interval: 1)
+        try store.transactional { db in try rec.insert(db) }
+
+        try store.transactional { db in
+            try RecurrenceService.sweepWorkEntries(db: db,
+                                                     entries: store.entries,
+                                                     cal: cal,
+                                                     today: startOfToday)
+        }
+        let after = try store.read { try WorkEntryRecord.fetchOne($0, key: rec.id.uuidString) }
+        #expect(after?.finishDate == nil, "finishDate=nil 时 guard 第一个条件 continue，不应推进")
+    }
 }
