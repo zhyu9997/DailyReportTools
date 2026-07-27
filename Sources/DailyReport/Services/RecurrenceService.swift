@@ -69,7 +69,10 @@ enum RecurrenceService {
         // 一次性会议（用户日常会这么命名）误删。加滚动过期窗：本函数首次执行日 + 6 个月内
         // 才执行清理，覆盖存量 v1 升级用户的迁移期；之后跳过避免对未来数据生效
         // （滚动而非写死绝对日期：app 长期运行不会过期失效）
-        let cleanupExpiry = Calendar.current.date(byAdding: .month, value: 6, to: Date())!
+        // R32-B：与 R32-A DaySlice / R31-D WeeklyReportView 同款，避免 Calendar.date(byAdding:)! 强制解包。
+        // fallback 用 6 × 31 天近似（覆盖最长月份），略宽于精确 6 个月窗口对「该清理」语义更安全
+        let cleanupExpiry = Calendar.current.date(byAdding: .month, value: 6, to: Date())
+            ?? Date().addingTimeInterval(6 * 31 * .day)
         guard startOfToday <= cleanupExpiry else { return }
         let residualCutoff = startOfToday.addingTimeInterval(-.week)
         for m in meetings where !m.isRecurring

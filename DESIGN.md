@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，205 tests / 15 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，228 tests / 19 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，205 tests / 15 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，228 tests / 19 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1048,6 +1048,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `NewEntryDraftTests` | 9 | canSubmit 拒空/拒纯空白 + consume 三分支（done/planned/blocker）的字段条件赋值（finishDate / helper / recurring / priority / blockerStatus）+ tagIds 映射 + reset 保留 kind/recurrenceUnit/recurrenceInterval（R24-F） |
 | `DaySliceTests` | 6 | contains(entry:) done 按 finishDate 归属 / planned 逾期归入今日 / planned 未来 finishDate 不归入 / contains(meeting:) 跨午夜边界（23:59 归今日、00:00 归次日）/ plannedSort 优先级 + finishDate 组合排序（R30-D，原 DaySlice 是 R24-B 抽出的核心组件，View/Store 共用，零测试覆盖） |
 | `AppStateTests` | 3 | migrateLegacyKeysIfNeeded 三分支：legacy 有值 + new 缺失 → 拷贝（5 对 key 类型保真：Bool/Int/Int/String/Int）/ new 已存在 → 不覆盖（保用户后续修改）/ 双方都没值 → 无副作用 no-op（R31-G，原启动期一次性迁移零覆盖，误改「总是覆盖」会丢用户设置） |
+| `RecordQueriesTests` | 3 | fetchTagMap 三分支：空中间表返 [:] / 单 owner 多 tag 按中间表插入顺序保留（不重排为 createdAt）/ tagId 在传入 allTagsById 找不到时静默跳过（R32-C，原仅靠 AppStoreTests 集成间接覆盖，无直接断言钉死顺序与 dangling 兜底） |
+| `IntArrayJSONTests` | 4 | encode/decode round-trip + 空数组 / decode(nil) 返 [] / decode 坏 JSON（截断 / 类型错 / 完全非 JSON）返 []（R32-D，WorkEntryRecord/MeetingRecord 的 recurrenceWeekdays/recurrenceMonthDays 持久化通道，原 R23-G 加的兜底无回归测试） |
+| `IsOverdueTests` | 8 | WorkEntryRecord.isOverdue：done/blocker/planned 无 finishDate 永远 false + planned 昨天 true + planned 今天 false（边界，按 startOfDay 严格 <）/ TodoItemRecord.isOverdue：isDone / dueDate nil / dueDate 过去三分支（R32-E，原 5+ 处 UI 视觉判断无测试钉死） |
+| `ColorHexTests` | 8 | 6 位带 # / 6 位不带 # / 含空白被 trim → 成功；3 位短格式（CSS 标准 #FFF）/ 空串 / 仅 # / 非 hex 字符 / 错误长度（5/7 位）→ 失败（R32-F，TagRecord.swiftUIColor 与 ColorSwatchPicker 的核心解析，原零覆盖，钉死「3 位短格式不支持」语义防误改） |
 
 ### 14.2 测试模式约定
 

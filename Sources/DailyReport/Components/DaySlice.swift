@@ -13,7 +13,9 @@ struct DaySlice {
     /// 用任意时刻作为锚点（typically `Date()` 或 `report.date`）
     init(anchor: Date) {
         self.start = anchor.startOfDay
-        self.end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
+        // R32-A：Calendar.date(byAdding:) 在极端日历/日期下文档允许返回 nil；
+        // 与 R31-D WeeklyReportView 同款兜底，避免强制解包在罕见路径 crash
+        self.end = Calendar.current.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(.day)
     }
 
     /// 直接给定区间（用于测试或自定义边界）
