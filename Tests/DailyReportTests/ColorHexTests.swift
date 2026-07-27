@@ -53,4 +53,44 @@ import SwiftUI
         #expect(Color(hex: "1234567") == nil)
         #expect(Color(hex: "#1234567") == nil)
     }
+
+    // MARK: - R38-D: hexString round-trip（Color(hex:) 的反运算）
+    // Color(hex:) 已有 8 测试覆盖；但反方向 hexString 零覆盖。它是 swiftUIColor 的逆运算，
+    // round-trip 是契约：Color(hex: s).hexString 归一化后应等于原 s（大写）。改任一方不动另一方会破坏契约
+
+    @Test func hexStringRoundTripsThroughColorHex() {
+        // 用 defaultPalette 的 8 个真实 hex 做 round-trip（钉死大写归一化）
+        for original in TagPickerPalette.defaultPalette {
+            let upper = original.uppercased()
+            guard let c = Color(hex: original) else {
+                Issue.record("defaultPalette 内的 \(original) 必须可解析（R38-H 也守护此点）")
+                continue
+            }
+            #expect(c.hexString == upper)
+        }
+    }
+
+    @Test func hexStringRendersPureRGBComponents() {
+        // 纯红 / 绿 / 蓝的 hexString 必须精确匹配（验证位运算 + format 正确性）
+        #expect(Color(hex: "#FF0000")?.hexString == "#FF0000")
+        #expect(Color(hex: "#00FF00")?.hexString == "#00FF00")
+        #expect(Color(hex: "#0000FF")?.hexString == "#0000FF")
+    }
+
+    // MARK: - R38-H: TagPickerPalette 全可解析 + defaultHex 兜底
+    // defaultPalette 是 8 个硬编码 hex，被 ColorSwatchPicker / nextDefaultColor 依赖。
+    // 若有人改错某项（如 "4A90D" 少一位），Color(hex:) 返回 nil，UI 的 ?? .gray 会静默降级。
+    // defaultHex 依赖 defaultPalette.first，若 palette 空则 fallback 也要有效
+
+    @Test func defaultPaletteAllHexesAreParseable() {
+        for hex in TagPickerPalette.defaultPalette {
+            #expect(Color(hex: hex) != nil, "defaultPalette 的 \(hex) 必须可解析")
+        }
+    }
+
+    @Test func defaultHexIsFirstOfPaletteAndParseable() {
+        // 钉死「defaultHex = defaultPalette.first」契约（防有人改成 .last 或硬编码另一个值）
+        #expect(TagPickerPalette.defaultHex == TagPickerPalette.defaultPalette.first)
+        #expect(Color(hex: TagPickerPalette.defaultHex) != nil)
+    }
 }

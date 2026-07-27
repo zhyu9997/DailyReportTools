@@ -192,4 +192,16 @@ import GRDB
         // 没崩即通过；不创建空目录
         #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("corrupted").path))
     }
+
+    // MARK: - R38-J: IntegrityError.description 文案
+    // runIntegrityCheck 失败时抛此错误，容错链路靠 description 区分「主库/fallback」失败原因。
+    // 改字符串模板（如漏掉 label 或 message）会让日志排查失去定位信息
+
+    @Test func integrityErrorDescriptionContainsBothLabelAndMessage() {
+        let err = AppDatabase.IntegrityError(message: "fk violation on review", label: "主库")
+        let s = err.description
+        #expect(s.contains("主库"))
+        #expect(s.contains("fk violation on review"))
+        #expect(s.contains("integrity_check"))   // 模板前缀
+    }
 }

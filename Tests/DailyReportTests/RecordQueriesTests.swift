@@ -172,4 +172,107 @@ import GRDB
         // 不抛错即通过
         #expect(Bool(true))
     }
+
+    // MARK: - R38-C: TagLinkTable.ownerColumn 映射直接覆盖
+    // fetchTagMap / replaceTagLinks / insertTagLinks / truncateAll 四处 SQL 拼接都依赖
+    // ownerColumn 返回正确列名；现有 insertTagLinksWritesRowsForEachTag 间接路过，
+    // 但未钉死「.dailyReport → "reportId"」这种映射本身——改 enum case 名不会编译失败，
+    // 但改 ownerColumn switch 分支返回值会静默把关系写到错误列。
+
+    @Test(arguments: RecordQueries.TagLinkTable.allCases)
+    func ownerColumnReturnsNonEmpty(link: RecordQueries.TagLinkTable) {
+        #expect(!link.ownerColumn.isEmpty)
+    }
+
+    @Test func ownerColumnValuesAreUniqueAcrossCases() {
+        // 4 个映射必须互斥：避免两个 case 指向同一列导致关系串表
+        let cols = RecordQueries.TagLinkTable.allCases.map(\.ownerColumn)
+        #expect(Set(cols).count == cols.count)
+    }
+
+    // MARK: - R38-A: fetchReviewsByMeeting 直接覆盖
+    // reloadAll 每次启动 + 每次写后都调用，与已补测试的 fetchTagMap 同等关键，
+    // 但原本只通过 AppStore 集成测试间接覆盖。三分支：空 review 表返 [:] /
+    // 多 review 按 (order, createdAt) 升序保留 / meetingId == nil 的孤儿 review 跳过
+
+    @Test func fetchReviewsByMeetingEmptyTableReturnsEmptyDict() throws {
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+        // 不预置任何 review
+        let result = try queue.read { db in
+            try RecordQueries.fetchReviewsByMeeting(db)
+        }
+        #expect(result.isEmpty)
+    }
+
+    @Test func fetchReviewsByMeetingGroupsByMeetingAndSortsByOrder() throws {
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+        let m1 = UUID(), m2 = UUID()
+        // 同一 meeting 下 3 条 review，order 故意打乱（2/1/3），createdAt 也错乱
+        // 期望：按 order 升序输出（order 相同才看 createdAt）
+        let rA = ReviewRecord(id: UUID(), reviewer: "A", opinion: "", order: 2,
+                              createdAt: Date(timeIntervalSince1970: 10), meetingId: m1)
+        let rB = ReviewRecord(id: UUID(), reviewer: "B", opinion: "", order: 1,
+                              createdAt: Date(timeIntervalSince1970: 20), meetingId: m1)
+        let rC = ReviewRecord(id: UUID(), reviewer: "C", opinion: "", order: 3,
+                              createdAt: Date(timeIntervalSince1970: 5), meetingId: m1)
+        let rD = ReviewRecord(id: UUID(), reviewer: "D", opinion: "", order: 1,
+                              createdAt: Date(timeIntervalSince1970: 1), meetingId: m2)
+        try queue.write { db in
+            // meeting 父表必须先有行（FK 约束）
+            for mid in [m1, m2] {
+                try db.execute(sql: """
+                    INSERT INTO meeting (id, topic, summary, timestamp, createdAt,
+                                         isRecurring, recurrenceUnitRaw, recurrenceInterval,
+                                         recurrenceWeekdays, recurrenceMonthDays)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                               arguments: [mid.uuidString, "t", "", Date(), Date(),
+                                           false, "Daily", 1, "[]", "[]"])
+            }
+            for var r in [rA, rB, rC, rD] {
+                try r.insert(db)
+            }
+        }
+        let result = try queue.read { db in
+            try RecordQueries.fetchReviewsByMeeting(db)
+        }
+        // m1 按 order 升序：B(1) → A(2) → C(3)
+        #expect(result[m1]?.map(\.id) == [rB.id, rA.id, rC.id])
+        // m2 只有 D
+        #expect(result[m2]?.map(\.id) == [rD.id])
+    }
+
+    @Test func fetchReviewsByMeetingSilentlySkipsOrphanReview() throws {
+        // meetingId == nil 的孤儿 review（理论上是数据异常，但 FK 允许 NULL）
+        // 应被跳过，不进任何 meeting 的列表，也不 crash
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+        let m1 = UUID()
+        let withMeeting = ReviewRecord(id: UUID(), reviewer: "X", opinion: "", order: 1,
+                                       createdAt: Date(), meetingId: m1)
+        let orphan = ReviewRecord(id: UUID(), reviewer: "Y", opinion: "", order: 1,
+                                  createdAt: Date(), meetingId: nil)
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO meeting (id, topic, summary, timestamp, createdAt,
+                                     isRecurring, recurrenceUnitRaw, recurrenceInterval,
+                                     recurrenceWeekdays, recurrenceMonthDays)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                           arguments: [m1.uuidString, "t", "", Date(), Date(),
+                                       false, "Daily", 1, "[]", "[]"])
+            var w = withMeeting
+            var o = orphan
+            try w.insert(db)
+            try o.insert(db)
+        }
+        let result = try queue.read { db in
+            try RecordQueries.fetchReviewsByMeeting(db)
+        }
+        // m1 命中 1 条；孤儿不进任何 key
+        #expect(result[m1]?.count == 1)
+        #expect(result.values.flatMap { $0 }.count == 1)
+    }
 }

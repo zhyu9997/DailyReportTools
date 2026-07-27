@@ -779,4 +779,72 @@ import GRDB
         #expect(after?.name == "不变")
         #expect(after?.colorHex == "#FF0000")
     }
+
+    // MARK: - R38-I: 批量删除空数组早退分支
+    // deleteEntries / deleteTodos 都有 `guard !ids.isEmpty else { return }` 防止无意义事务。
+    // 重构去掉 guard（如换成 for-loop 不检查）会触发 reloadAll 无谓刷新；钉死 no-op 语义
+
+    @Test func deleteEntriesEmptyArrayIsNoOp() throws {
+        let store = try Self.makeStore()
+        // 先插一条 entry，证明空数组调用不影响已有数据
+        _ = try store.insertEntry(NewWorkEntry(
+            title: "保留", detail: "", timestamp: Date(), kind: .done,
+            tagIds: [], finishDate: nil, helper: nil, isRecurring: false,
+            recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            blockerStatus: .ongoing, priority: .medium
+        ))
+        let countBefore = store.entries.count
+        try store.deleteEntries([])
+        #expect(store.entries.count == countBefore)   // 不变
+        #expect(store.entries.first?.title == "保留")
+    }
+
+    @Test func deleteTodosEmptyArrayIsNoOp() throws {
+        let store = try Self.makeStore()
+        _ = try store.insertTodo(NewTodo(title: "保留", notes: "", dueDate: nil, tagIds: []))
+        let countBefore = store.todos.count
+        try store.deleteTodos([])
+        #expect(store.todos.count == countBefore)
+        #expect(store.todos.first?.title == "保留")
+    }
+
+    // MARK: - R38-B: truncateAll 4 张中间表参数化穷举
+    // truncateAll 用 TagLinkTable.allCases 循环 DELETE 4 张中间表，原 vacuumRunsCleanly 只把它
+    // 作为前置 fixture 路过；改 enum 加 case 时若漏改循环体会留下脏表。参数化钉死 4 表都被清空
+
+    @Test(arguments: RecordQueries.TagLinkTable.allCases)
+    func truncateAllClearsEveryTagLinkTable(link: RecordQueries.TagLinkTable) async throws {
+        let store = try Self.makeStore()
+        // 给每种 link 都预置 1 行关系
+        let tag = try store.insertTag(NewTag(name: "T", colorHex: "#000000"))
+        let report = try store.getOrCreateReport(for: Date())
+        try store.setReportTags(report.id, tagIds: [tag.id])
+        let todo = try store.insertTodo(NewTodo(title: "TD", notes: "", dueDate: nil, tagIds: [tag.id]))
+        let entry = try store.insertEntry(NewWorkEntry(
+            title: "E", detail: "", timestamp: Date(), kind: .done,
+            tagIds: [tag.id], finishDate: nil, helper: nil, isRecurring: false,
+            recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            blockerStatus: .ongoing, priority: .medium
+        ))
+        let meeting = try store.insertMeeting(NewMeeting(
+            topic: "M", summary: "", timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [], tagIds: [tag.id],
+            reviews: []
+        ))
+
+        // 在 store 的事务里直接调 truncateAll（transactional 内部已触发 reloadAll）
+        try store.transactional { db in
+            try AppStore.truncateAll(in: db)
+        }
+        // 用 store 的只读快照验证对应 link 的关系已清空
+        switch link {
+        case .dailyReport: #expect(store.tagsByReport[report.id]?.isEmpty ?? true)
+        case .todo:        #expect(store.tagsByTodo[todo.id]?.isEmpty ?? true)
+        case .workEntry:   #expect(store.tagsByEntry[entry.id]?.isEmpty ?? true)
+        case .meeting:     #expect(store.tagsByMeeting[meeting.id]?.isEmpty ?? true)
+        }
+    }
 }

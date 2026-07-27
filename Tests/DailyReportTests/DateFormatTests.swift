@@ -90,4 +90,42 @@ import Foundation
         let d = Date().addingTimeInterval(-5)
         #expect(d.relativeTime == "刚刚")
     }
+
+    // MARK: - R38-F: relativeTime 补齐缺失分支
+    // 原版只覆盖 future（shortTime）+ 刚刚；今天 >60s 分钟前 / 今天 >3600 小时前 /
+    // 昨天 / 跨年 4 个分支全无。这些是 WorkEntryCard.display 渲染高频路径，
+    // 改 cal.isDateInToday / isDateInYesterday 或 dateComponents 容易引入回归
+
+    @Test func relativeTimeTodayReturnsMinutesAgo() {
+        // 5 分钟前：返回 "5分钟前"（边界 >60s）
+        let d = Date().addingTimeInterval(-5 * 60)
+        let s = d.relativeTime
+        #expect(s.contains("5"))
+        #expect(s.contains("分钟前"))
+    }
+
+    @Test func relativeTimeTodayReturnsHoursAgo() {
+        // 2 小时前：返回 "2小时前"（边界 >3600s）
+        let d = Date().addingTimeInterval(-2 * 3600)
+        let s = d.relativeTime
+        #expect(s.contains("2"))
+        #expect(s.contains("小时前"))
+    }
+
+    @Test func relativeTimeYesterdayReturnsYesterdayPrefix() {
+        // 昨天：返回 "昨天 HH:mm"（依赖 cal.isDateInYesterday）
+        let cal = Calendar.current
+        let now = Date()
+        let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!
+        let s = yesterday.relativeTime
+        #expect(s.contains("昨天"))
+    }
+
+    @Test func relativeTimeCrossYearShowsYear() {
+        // 跨年（2 年前）：fmtRelativeCrossYear "yyyy年M月d日"，包含年份
+        let twoYearsAgo = Date().addingTimeInterval(-2 * 365 * 24 * 3600)
+        let s = twoYearsAgo.relativeTime
+        let yearStr = String(Calendar.current.component(.year, from: twoYearsAgo))
+        #expect(s.contains(yearStr))
+    }
 }
