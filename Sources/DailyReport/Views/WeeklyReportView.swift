@@ -20,8 +20,10 @@ struct WeeklyReportView: View {
     }
 
     /// 任务的归属日：完成/计划按 finishDate（实际/计划完成日），问题按发生时间
-    ///——跨天完成的任务归到「完成那天」，而非创建那天
-    private func belongDate(_ e: WorkEntryRecord) -> Date {
+    ///——跨天完成的任务归到「完成那天」，而非创建那天。
+    /// R35-B：抽出 static + internal 让纯函数可被单元测试直接覆盖
+    /// （与 ExportService.markdownForDay / R22-A 同款抽法；testable import 直接调）
+    static func belongDate(_ e: WorkEntryRecord) -> Date {
         switch e.kind {
         case .done, .planned: return e.finishDate ?? e.timestamp
         case .blocker:        return e.timestamp
@@ -32,9 +34,9 @@ struct WeeklyReportView: View {
         let r = weekRange
         let endNext = r.end.addingTimeInterval(.day)
         return entries.filter {
-            let b = belongDate($0)
+            let b = Self.belongDate($0)
             return b >= r.start && b < endNext
-        }.sorted { belongDate($0) < belongDate($1) }
+        }.sorted { Self.belongDate($0) < Self.belongDate($1) }
     }
 
     private var weekDays: [Date] {
@@ -49,7 +51,7 @@ struct WeeklyReportView: View {
         let cal = Calendar.current
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(.day)
         let dayEntries = weekEntries.filter {
-            let b = belongDate($0)
+            let b = Self.belongDate($0)
             return b >= day && b < next
         }
         // 用 isDate(_:inSameDayAs:) 防御性匹配，未来若 report.date 改了精度/时区不会静默漏
@@ -94,13 +96,19 @@ struct WeeklyReportView: View {
                     }
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
-                // 仅当 weekAnchor 本来就在本周时同步跨日；用户翻看历史时不打断
-                let cal = Calendar.current
-                if cal.isDate(Date(), equalTo: weekAnchor, toGranularity: .weekOfYear) {
-                    weekAnchor = Date()
+            // R35-G：与其他三个视图（HistoryView / TodayView / MenuPanelView）一致用 crossMidnightTick。
+            // 原版手写 NSCalendarDayChanged publisher 是 R25-E 抽出 modifier 之前的老代码。
+            // 60s onTick 留空（WeeklyReportView 无 nowTick 这种实时状态，weekAnchor 只在用户操作或跨日时改）
+            .crossMidnightTick(
+                onTick: {},
+                onDayChange: {
+                    // 仅当 weekAnchor 本来就在本周时同步跨日；用户翻看历史时不打断
+                    let cal = Calendar.current
+                    if cal.isDate(Date(), equalTo: weekAnchor, toGranularity: .weekOfYear) {
+                        weekAnchor = Date()
+                    }
                 }
-            }
+            )
             .writeErrorAlert($exportError, title: "导出失败")
         }
     }

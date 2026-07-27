@@ -246,4 +246,30 @@ import Foundation
     private static func makeDate(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int) -> Date {
         cal.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
     }
+
+    // MARK: - R35-F: weekdayLong 直接单测
+
+    @Test func weekdayLongCoversSundayThroughSaturday() {
+        // 1=周日 ... 7=周六
+        #expect(Recurrence.weekdayLong(1) == "周日")
+        #expect(Recurrence.weekdayLong(2) == "周一")
+        #expect(Recurrence.weekdayLong(3) == "周二")
+        #expect(Recurrence.weekdayLong(4) == "周三")
+        #expect(Recurrence.weekdayLong(5) == "周四")
+        #expect(Recurrence.weekdayLong(6) == "周五")
+        #expect(Recurrence.weekdayLong(7) == "周六")
+    }
+
+    @Test func weekdayLongReturnsQuestionMarkOutOfBounds() {
+        #expect(Recurrence.weekdayLong(0) == "?")
+        #expect(Recurrence.weekdayLong(8) == "?")
+        #expect(Recurrence.weekdayLong(-1) == "?")
+    }
+
+    /// 与 weekdaySymbol 数据源一致性：双字版必须 = "周" + 单字版
+    @Test func weekdayLongEqualsZhouPlusSymbol() {
+        for wd in 1...7 {
+            #expect(Recurrence.weekdayLong(wd) == "周" + Recurrence.weekdaySymbol(wd))
+        }
+    }
 }

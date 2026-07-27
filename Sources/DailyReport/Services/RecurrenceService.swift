@@ -86,10 +86,13 @@ enum RecurrenceService {
 
     /// 逾期未做的周期性计划 → 原地推进 finishDate 到下一次
     ///（与会议语义一致：不克隆、不留历史；用户若想留下"这一期做完了"的痕迹，走完成路径 store.markEntryDone）
-    private static func sweepWorkEntries(db: Database,
-                                          entries: [WorkEntryRecord],
-                                          cal: Calendar,
-                                          today: Date) throws {
+    ///
+    /// R35-H：从 private 改 internal 以便单测覆盖三分支（未逾期 skip / 逾期推进 / 非 recurring skip），
+    /// 与 sweepMeetings（R25-F 同款改法）测试覆盖对称
+    static func sweepWorkEntries(db: Database,
+                                  entries: [WorkEntryRecord],
+                                  cal: Calendar,
+                                  today: Date) throws {
         for e in entries where e.isRecurring && e.kind == .planned {
             guard let f = e.finishDate, cal.startOfDay(for: f) < today else { continue }
             // now 基准用 startOfToday（与 sweepMeetings 一致），避免今天恰好是匹配的

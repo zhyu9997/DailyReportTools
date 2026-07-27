@@ -111,7 +111,12 @@ struct XLSXWriter {
         var out = ""
         while n > 0 {
             n -= 1
-            out = String(Character(UnicodeScalar(65 + (n % 26))!)) + out
+            // R35-D：UnicodeScalar 构造文档上允许 nil（invalid input），原版 force-unwrap。
+            // 当前 65 + (0...25) 数学上恒合法，但与本仓 Calendar.date 等其它「nil 兜底」风格一致，
+            // 改为安全构造 + 跳过非法值（防御未来魔数被改错时直接 crash）
+            if let scalar = UnicodeScalar(65 + (n % 26)) {
+                out = String(Character(scalar)) + out
+            }
             n /= 26
         }
         return out

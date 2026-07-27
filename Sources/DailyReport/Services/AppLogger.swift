@@ -7,7 +7,8 @@ import os
 /// 单文件超过 `maxBytes`（默认 1 MB）自动滚动为 `app.log.1/.2/...`，保留最近 `keepCount` 份。
 /// 写入串行化（NSLock），防止跨线程并发 append 交叉损坏。
 enum AppLogger {
-    private static let subsystem = "com.zhyu.dailyreport"
+    // R35-E：subsystem 改为引用 AppState.bundleIdentifier，与 UserDefaults keyPrefix / legacyDir 同源
+    private static let subsystem = AppState.bundleIdentifier
     private static let osLogger = Logger(subsystem: subsystem, category: "app")
     private static let faultLogger = Logger(subsystem: subsystem, category: "logger-fault")
     private static let maxBytes: Int64 = 1 * 1024 * 1024

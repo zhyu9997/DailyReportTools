@@ -23,13 +23,9 @@ struct SettingsView: View {
         authStatus == .authorized || authStatus == .provisional
     }
 
-    /// 显示「marketing (build)」版本号，方便用户排查时一键复制
-    private var appVersionLabel: String {
-        let info = Bundle.main.infoDictionary ?? [:]
-        let ver = info["CFBundleShortVersionString"] as? String ?? "?"
-        let build = info["CFBundleVersion"] as? String ?? "?"
-        return "\(ver) (\(build))"
-    }
+    /// 显示「marketing (build)」版本号，方便用户排查时一键复制。
+    /// R35-C：抽到 AppState.appVersionLabel 共享，DailyReportApp 启动日志也复用
+    private var appVersionLabel: String { AppState.appVersionLabel }
 
     var body: some View {
         Form {

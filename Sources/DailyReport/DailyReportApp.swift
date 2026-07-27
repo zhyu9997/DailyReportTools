@@ -35,9 +35,7 @@ struct DailyReportApp: App {
         }
         // 7) 旧数据残留提醒（首次告警后写 .swiftdata_warned，避免每次启动重复噪音）
         Self.warnIfLegacyDataRemains()
-        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        AppLogger.info("DailyReport 启动完成：version=\(ver) build=\(build)，db：\(AppDatabase.primaryURL.path)")
+        AppLogger.info("DailyReport 启动完成：version=\(AppState.appVersion) build=\(AppState.appBuild)，db：\(AppDatabase.primaryURL.path)")
     }
 
     /// 检测 `~/Library/Application Support/com.zhyu.dailyreport/` 下是否残留旧的 SwiftData 库；
@@ -46,7 +44,7 @@ struct DailyReportApp: App {
     private static func warnIfLegacyDataRemains() {
         let fm = FileManager.default
         guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-        let legacyDir = appSupport.appendingPathComponent("com.zhyu.dailyreport", isDirectory: true)
+        let legacyDir = appSupport.appendingPathComponent(AppState.bundleIdentifier, isDirectory: true)
         let legacyStore = legacyDir.appendingPathComponent("default.store")
         guard fm.fileExists(atPath: legacyStore.path) else { return }
         // 已告警过则跳过

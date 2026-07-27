@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，244 tests / 22 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，259 tests / 25 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，244 tests / 22 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，259 tests / 25 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1039,7 +1039,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `BackupServiceIntegrationTests` | 8 | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + encode/decode 保留 recurrence 字段 + weeklyBackupIfDue 窗口判定（周四跳 / 周五写 / 同周幂等 / 写失败返回 false）（R24-G） |
 | `AppDatabaseTests` | 8 | archiveCorruptedDB 三文件归档 + 缺源 no-op + 同秒碰撞后缀 + README 写入 + **corrupted/ 被占用为文件时的失败路径**（R26-F）；pruneCorruptedArchives 保留最近 N + 数量不足 no-op + 目录缺失 no-op（R23-C） |
 | `RecurrenceServiceTests` | 15 | sweepMeetings/sweepWorkEntries 各场景（逾期推进 / 今天保留 / 一次性会议保留 / 同主题残留清理）+ markDone 克隆下一期 / blocker → done / 已 done 的 race no-op + 月度周期跨月边界（R21-A）+ cleanupExpiry 保留分支（summary 非空 / review 非空）（R25-F） |
-| `RecurrenceTests` | 22 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 + base 在未来时 interval 不影响返回（R29-D） |
+| `RecurrenceTests` | 25 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 + base 在未来时 interval 不影响返回（R29-D）+ weekdayLong 1...7 双字映射 + 越界返回 ? + 与 weekdaySymbol 同源数据一致性（R35-F） |
 | `XLSXWriterTests` | 19 | XML 转义（4 实体 + 边界）+ 列字母转换（A-Z / AA-ZZ / AAA-ZZZ）+ CRC32 标准向量 |
 | `AppLoggerTests` | 7 | 日志滚动：未达上限 no-op / 创建 `.1` / 顺移现有文件 / 满槽删最旧 / maxBytes=0 立即滚 / keepCount=1 直删原文件 |
 | `ExportServiceTests` | 17 | csvEscape（RFC 4180 三种触发条件）+ sanitizeSheetName（7 禁用字符 + 31 字符截断）+ sanitizeFilename + weekdayName + markdownForDay 分组排序 + tag 渲染 + report note 渲染（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的提前 return bug）+ WorkKind.emoji 编译期覆盖所有 case |
@@ -1055,6 +1055,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `RecurrenceCapableTests` | 3 | RecurrenceCapable.recurrenceLabel 三分支：未开启 recurring 返回空串 / 单元 + interval 拼接（与 Recurrence.recurrenceLabel 静态函数对齐） / 月度按 monthDays 渲染（R33-A，原 protocol 默认实现零覆盖，调用方 WorkEntryRecord/MeetingRecord 共 2 处） |
 | `StringExtensionsTests` | 8 | isBlank：空串 / 纯空格 / 纯换行（与原 .whitespaces 关键差异）/ 混合空白 / 内容不为空；trimmed：去首尾 / 去换行 Tab / 保留中间空白 / 空串稳定（R34-C，原 25+ 处写入路径作 guard 与清洗的核心 helper 零覆盖，钉死「统一 .whitespacesAndNewlines」语义防回退） |
 | `CalendarMondayTests` | 5 | monday(for:) 五分支：输入即周一 / 周中 / 周日（系统 firstWeekday=1 仍归上一周周一，注释里踩过的坑）/ 跨月 / 跨年（R34-D，BackupService.weekKey 8 个测试已间接覆盖，但 monday(for:) 本身零测试钉死「强制 firstWeekday=2」语义） |
+| `SpawnNextTests` | 3 | WorkEntryRecord.spawnNext 三分支：isRecurring=false → nil / kind != .planned → nil（done / blocker 两个 case）/ 正常克隆 14 字段 + 新 id + finishDate 推进（R35-A，markEntryDone 调用的核心纯函数零测试覆盖） |
+| `BelongDateTests` | 5 | WeeklyReportView.belongDate 五分支：done/planned → finishDate ?? timestamp（finishDate 缺失走 timestamp 兜底）/ blocker → timestamp（即使有 finishDate 也不用，与 done/planned 的关键差异）（R35-B，周报聚合的核心判定零测试） |
+| `SweepWorkEntriesTests` | 4 | RecurrenceService.sweepWorkEntries 四分支：未逾期 skip / 逾期推进（finishDate 不再逾期）/ 非 recurring skip / blocker 即使 recurring 也 skip（R35-H，sweepMeetings 已有 R25-F 测试，sweepWorkEntries 是对称分支却长期黑盒） |
+
+R35-F 在已有 `RecurrenceTests` 追加 3 用例（weekdayLong 1...7 双字映射 + 越界返回 ? + 与 weekdaySymbol 数据源一致性「周 + 单字 == 双字」），不新建 suite。RecurrenceTests 用例数 22 → 25。
 
 ### 14.2 测试模式约定
 
