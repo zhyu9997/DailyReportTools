@@ -5,9 +5,13 @@ enum Recurrence {
     /// 中文习惯的星期显示顺序：一 二 三 四 五 六 日（Calendar weekday：2,3,4,5,6,7,1）
     static let weekdayDisplayOrder: [Int] = [2, 3, 4, 5, 6, 7, 1]
 
-    /// weekday（1=周日 ... 7=周六）→ 中文
-    private static func weekdaySymbol(_ weekday: Int) -> String {
-        ["日", "一", "二", "三", "四", "五", "六"][weekday - 1]
+    /// weekday（1=周日 ... 7=周六）→ 中文。
+    /// R31-A 抽出：原版 private + 直接 subscript 无越界 guard；ExportService.weekdayName 与
+    /// RecurrenceEditor 各写一份硬编码 switch / 数组。三处映射统一到本函数，加越界兜底防 crash
+    static func weekdaySymbol(_ weekday: Int) -> String {
+        let table = ["日", "一", "二", "三", "四", "五", "六"]   // index 0 = 周日（weekday 1）
+        guard (1...7).contains(weekday) else { return "?" }
+        return table[weekday - 1]
     }
 
     /// 计算下一个未来的触发日（保留 base 的时分）

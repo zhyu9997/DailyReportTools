@@ -157,6 +157,8 @@ enum BackupService {
     }
 
     /// 把 Snapshot 全量插入到给定 db（restore 用；不清理，假定 db 已是空库或即将提交）
+    /// R31-B：4 张中间表 INSERT 走 RecordQueries.insertTagLinks，与 replaceTagLinks 共享一份 SQL，
+    /// 改 schema（如重命名 ownerColumn）只动 TagLinkTable enum 一处
     private static func insertSnapshot(_ s: Snapshot, into db: Database) throws {
         // Tags
         for t in s.tags {
@@ -168,10 +170,7 @@ enum BackupService {
             var rec = DailyReportRecord(id: r.id, date: r.date, note: r.note,
                                         createdAt: r.createdAt, updatedAt: r.updatedAt)
             try rec.insert(db)
-            for tid in r.tagIds {
-                try db.execute(sql: "INSERT INTO tag_daily_report (tagId, reportId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, r.id.uuidString])
-            }
+            try RecordQueries.insertTagLinks(db, link: .dailyReport, ownerId: r.id, tagIds: r.tagIds)
         }
         // TodoItems
         for td in s.todos {
@@ -179,10 +178,7 @@ enum BackupService {
                                      dueDate: td.dueDate, createdAt: td.createdAt,
                                      completedAt: td.completedAt)
             try rec.insert(db)
-            for tid in td.tagIds {
-                try db.execute(sql: "INSERT INTO tag_todo (tagId, todoId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, td.id.uuidString])
-            }
+            try RecordQueries.insertTagLinks(db, link: .todo, ownerId: td.id, tagIds: td.tagIds)
         }
         // WorkEntries
         for e in s.entries {
@@ -197,10 +193,7 @@ enum BackupService {
                 createdAt: e.createdAt
             )
             try rec.insert(db)
-            for tid in e.tagIds {
-                try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, e.id.uuidString])
-            }
+            try RecordQueries.insertTagLinks(db, link: .workEntry, ownerId: e.id, tagIds: e.tagIds)
         }
         // Meetings
         for m in s.meetings {
@@ -213,10 +206,7 @@ enum BackupService {
                 recurrenceMonthDays: m.recurrenceMonthDays
             )
             try rec.insert(db)
-            for tid in m.tagIds {
-                try db.execute(sql: "INSERT INTO tag_meeting (tagId, meetingId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, m.id.uuidString])
-            }
+            try RecordQueries.insertTagLinks(db, link: .meeting, ownerId: m.id, tagIds: m.tagIds)
         }
         // Reviews（关联到 Meeting）
         for r in s.reviews {

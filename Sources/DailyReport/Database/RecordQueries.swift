@@ -87,6 +87,16 @@ enum RecordQueries {
         let ownerStr = ownerId.uuidString
         try db.execute(sql: "DELETE FROM \(link.rawValue) WHERE \(link.ownerColumn) = ?",
                        arguments: [ownerStr])
+        try insertTagLinks(db, link: link, ownerId: ownerId, tagIds: tagIds)
+    }
+
+    /// 仅 INSERT（不带 DELETE）：BackupService.restore 在 truncateAll 后调用，
+    /// 此时 owner 行下没有任何旧关系可 DELETE。R31-B 抽出与 replaceTagLinks 共享一份 INSERT SQL
+    static func insertTagLinks(_ db: Database,
+                                link: TagLinkTable,
+                                ownerId: UUID,
+                                tagIds: [UUID]) throws {
+        let ownerStr = ownerId.uuidString
         for tid in tagIds {
             try db.execute(
                 sql: "INSERT INTO \(link.rawValue) (tagId, \(link.ownerColumn)) VALUES (?, ?)",

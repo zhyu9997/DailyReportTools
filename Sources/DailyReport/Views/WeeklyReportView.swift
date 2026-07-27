@@ -13,7 +13,9 @@ struct WeeklyReportView: View {
     private var weekRange: (start: Date, end: Date) {
         let cal = Calendar.current
         let monday = cal.monday(for: weekAnchor).startOfDay
-        let sunday = cal.date(byAdding: .day, value: 6, to: monday)!
+        // R31-D：Calendar.date(byAdding:) 在极端日历/日期下文档允许返回 nil；
+        // 用 ?? 兜底避免强制解包在罕见路径 crash（用户切非公历日历或异常 weekAnchor 时触发）
+        let sunday = cal.date(byAdding: .day, value: 6, to: monday) ?? monday.addingTimeInterval(6 * .day)
         return (monday, sunday)
     }
 
@@ -37,12 +39,15 @@ struct WeeklyReportView: View {
 
     private var weekDays: [Date] {
         let cal = Calendar.current
-        return (0..<7).map { cal.date(byAdding: .day, value: $0, to: weekRange.start)! }
+        // R31-D：单条 nil 退到 day+1 近似值，整体仍返回 7 个元素保证 UI 不崩
+        return (0..<7).map {
+            cal.date(byAdding: .day, value: $0, to: weekRange.start) ?? weekRange.start.addingTimeInterval(TimeInterval($0) * .day)
+        }
     }
 
     private func dayData(_ day: Date) -> ExportService.DayData {
         let cal = Calendar.current
-        let next = cal.date(byAdding: .day, value: 1, to: day)!
+        let next = cal.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(.day)
         let dayEntries = weekEntries.filter {
             let b = belongDate($0)
             return b >= day && b < next

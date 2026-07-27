@@ -419,11 +419,12 @@ final class AppStore {
 
     /// 在已有事务里清空全部表（供 BackupService.restore 在单事务里 truncate+重建）
     static func truncateAll(in db: Database) throws {
-        // 顺序：先子（关系/Review）后父
-        try db.execute(sql: "DELETE FROM tag_daily_report")
-        try db.execute(sql: "DELETE FROM tag_todo")
-        try db.execute(sql: "DELETE FROM tag_work_entry")
-        try db.execute(sql: "DELETE FROM tag_meeting")
+        // 顺序：先子（4 张中间表 / Review）后父
+        // R31-E：4 张中间表 DELETE 走 TagLinkTable enum 循环，与 replaceTagLinks / insertTagLinks
+        /// 共享同一份表名来源；加新中间表（如未来 tag_xxx）只需扩 enum 一处
+        for link in [RecordQueries.TagLinkTable.dailyReport, .todo, .workEntry, .meeting] {
+            try db.execute(sql: "DELETE FROM \(link.rawValue)")
+        }
         try db.execute(sql: "DELETE FROM review")
         try db.execute(sql: "DELETE FROM work_entry")
         try db.execute(sql: "DELETE FROM todo_item")

@@ -11,8 +11,6 @@ struct RecurrenceEditor: View {
     @Binding var weekdays: [Int]
     @Binding var monthDays: [Int]
 
-    private let weekdaySymbols = ["一", "二", "三", "四", "五", "六", "日"]
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: $isOn) {
@@ -58,9 +56,8 @@ struct RecurrenceEditor: View {
             }
         case .weekly:
             HStack(spacing: 4) {
-                ForEach(Array(Recurrence.weekdayDisplayOrder.enumerated()), id: \.element) { _, wd in
-                    let idx = Recurrence.weekdayDisplayOrder.firstIndex(of: wd) ?? 0
-                    weekdayChip(weekday: wd, symbol: weekdaySymbols[idx])
+                ForEach(Recurrence.weekdayDisplayOrder, id: \.self) { wd in
+                    weekdayChip(weekday: wd)
                 }
             }
         case .monthly:
@@ -73,34 +70,47 @@ struct RecurrenceEditor: View {
         }
     }
 
-    private func weekdayChip(weekday: Int, symbol: String) -> some View {
-        let selected = weekdays.contains(weekday)
-        return Button {
-            if selected { weekdays.removeAll { $0 == weekday } }
-            else { weekdays.append(weekday) }
-        } label: {
-            Text(symbol)
-                .font(.caption2.weight(selected ? .semibold : .regular))
-                .frame(width: 24, height: 20)
-                .background(selected ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.1))
-                .overlay(Capsule().stroke(selected ? Color.accentColor.opacity(0.7) : Color.clear, lineWidth: 1))
-                .clipShape(Capsule())
-                .foregroundStyle(.primary)
+    /// weekday chip：复用 Recurrence.weekdaySymbol 统一中文符号源（R31-A）
+    private func weekdayChip(weekday: Int) -> some View {
+        selectChip(
+            title: Recurrence.weekdaySymbol(weekday),
+            isSelected: weekdays.contains(weekday),
+            width: 24
+        ) {
+            if weekdays.contains(weekday) {
+                weekdays.removeAll { $0 == weekday }
+            } else {
+                weekdays.append(weekday)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     private func monthDayButton(_ day: Int) -> some View {
-        let selected = monthDays.contains(day)
-        return Button {
-            if selected { monthDays.removeAll { $0 == day } }
-            else { monthDays.append(day) }
-        } label: {
-            Text("\(day)")
-                .font(.caption2.weight(selected ? .semibold : .regular))
-                .frame(width: 28, height: 20)
-                .background(selected ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.1))
-                .overlay(Capsule().stroke(selected ? Color.accentColor.opacity(0.7) : Color.clear, lineWidth: 1))
+        selectChip(
+            title: "\(day)",
+            isSelected: monthDays.contains(day),
+            width: 28
+        ) {
+            if monthDays.contains(day) {
+                monthDays.removeAll { $0 == day }
+            } else {
+                monthDays.append(day)
+            }
+        }
+    }
+
+    /// R31-C：weekdayChip 与 monthDayButton 原本逐行复制（视觉规格几乎相同，仅 title / width / 数组不同）。
+    /// 抽 helper 后样式调一处全跟（hover / 字号 / 颜色调整不再需要改两遍）
+    private func selectChip(title: String,
+                             isSelected: Bool,
+                             width: CGFloat,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption2.weight(isSelected ? .semibold : .regular))
+                .frame(width: width, height: 20)
+                .background(isSelected ? Color.accentColor.opacity(0.3) : Color.secondary.opacity(0.1))
+                .overlay(Capsule().stroke(isSelected ? Color.accentColor.opacity(0.7) : Color.clear, lineWidth: 1))
                 .clipShape(Capsule())
                 .foregroundStyle(.primary)
         }

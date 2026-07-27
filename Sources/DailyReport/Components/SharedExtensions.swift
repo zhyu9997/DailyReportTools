@@ -118,11 +118,6 @@ extension Calendar {
         let comps = c.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
         return c.date(from: comps) ?? date
     }
-    /// 月份首日
-    func monthStart(for date: Date) -> Date {
-        let comps = dateComponents([.year, .month], from: date)
-        return self.date(from: comps) ?? date
-    }
 }
 
 // MARK: - NSSavePanel helper
