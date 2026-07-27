@@ -50,7 +50,7 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**388 tests / 33 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**407 tests / 36 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
@@ -59,7 +59,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `BackupServiceTests` (42) | weekKey（含跨月/跨年边界）+ 各 prefix backup 存在性 + prune 策略 + decode 拒绝高版本/坏 JSON + decode 加固（payloadTooLarge / danglingTagReference）+ Snapshot 全字段 round-trip（6 主表 + recurrenceWeekdays/monthDays/reviewIds/meetingId/order 全字段）（R40-A） |
 | `BackupServiceIntegrationTests` (10) | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + weeklyBackupIfDue 窗口判断（周五触发 / 同周幂等 / 窗口外跳过 / 写失败返回 false）+ insertSnapshot 直接单测（隔离 restore 包装层，钉死 DTO→Record 映射 + 中间表关系）（R40-F） |
 | `RecurrenceServiceTests` (15) | sweep 推进 + markDone 克隆下一期 + race no-op + 月度周期跨月边界（含月末 overflow 31→非 2 月）+ cleanup 分支（保 summary / 保 review） |
-| `RecurrenceTests` (29) | daily/weekly/monthly + interval 跳跃 + 月末 overflow 防御 + weekdayLong/weekdaySymbol 越界兜底（R35-F/R37-G）+ label 空 weekdays/monthDays 返回纯前缀分支（R40-D） |
+| `RecurrenceTests` (35) | daily/weekly/monthly + interval 跳跃 + 月末 overflow 防御 + weekdayLong/weekdaySymbol 越界兜底（R35-F/R37-G）+ label 空 weekdays/monthDays 返回纯前缀分支（R40-D）+ label/nextFutureDate 的 interval ≤ 0 兜底为 1（属性等价测试，R42-B/C） |
 | `XLSXWriterTests` (22) | XML 转义 + 列字母 + CRC32 + dosDateTime 边界（R37-F） |
 | `EnumDisplayTests` (15) | WorkKind/BlockerStatus/Priority/RecurrenceUnit 展示属性非空 + 互斥 + sortOrder（R37-A）+ WorkKind.color(status:) 全 9 组合参数化（blocker 委托 status，done/planned 忽略 status）（R40-H） |
 | `AppearanceModeTests` (6) | colorScheme 三分支 + localizedName 非空/互斥（R37-D） |
@@ -70,6 +70,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `ReminderServiceTests` (7) | decision 三分支决策：disabled → removeOnly / enabled + denied → none（保旧 pending）/ enabled + 非 denied → removeAndAdd；Decision case 互斥性 |
 | `NewEntryDraftTests` (10) | NewEntryDraft.canSubmit（标题空/分类非法）+ consume 三种 kind 派发 + reset 回默认 + consume 保留 selectedTags 顺序（UUID 字典序倒序传入不重排）（R41-L） |
 | `AppDatabaseTests` (9) | archiveCorruptedDB 三件套归档 + 同秒冲突 -2 后缀 + README 含 reason + 源缺失 no-op；pruneCorruptedArchives 保留最新 N + 上限内 no-op + 目录缺失 no-op；IntegrityError.description 含 label + message + 前缀（R38-J） |
+| `ConvertKindTests` (7) | HistoryView.convertKind 跨 kind 拖拽字段清理：same-kind no-op / blocker→planned 清 helper+重置 status / done→planned 清 finishDate（防新 planned 立刻 isOverdue）/ planned/done→blocker 清 recurring+finishDate（防「周期性 blocker」怪胎）/ planned→done case break 保留字段 / extra 闭包后执行（R42-A） |
+| `TimeLabelTests` (4) | SettingsView.timeLabel 边界：0→"00:00" / 1439→"23:59" / 90→"01:30" / 整点无尾分钟（R42-D，原 private 实例方法零覆盖，改 static internal 抽出） |
+| `DeleteMessageTests` (2) | TodayView.deleteMessage nil→空串兜底 + non-nil→"「<title>」将被删除。"（R42-E，原 private static 零覆盖，改 internal 抽出） |
 
 View 层不测（SwiftUI 视图组合靠人工验证）。
 

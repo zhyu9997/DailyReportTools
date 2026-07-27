@@ -70,7 +70,7 @@ struct SettingsView: View {
                         }
                     )) {
                         ForEach(Array(stride(from: 0.0, through: 1439.0, by: 15.0)), id: \.self) { v in
-                            Text(timeLabel(Int(v))).tag(v)
+                            Text(Self.timeLabel(Int(v))).tag(v)
                         }
                     }
                     .labelsHidden()
@@ -187,7 +187,9 @@ struct SettingsView: View {
         }
     }
 
-    private func timeLabel(_ mins: Int) -> String {
+    /// 分钟数 → "HH:mm" 文案。R42-D：从 private 改 static internal 便于单测覆盖边界
+    /// （0→"00:00" / 1439→"23:59" / 90→"01:30"）。设置页提醒时间显示用
+    static func timeLabel(_ mins: Int) -> String {
         String(format: "%02d:%02d", mins / 60, mins % 60)
     }
 

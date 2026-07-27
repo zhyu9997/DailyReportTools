@@ -80,7 +80,8 @@ struct TodayView: View {
     }
 
     /// alert message 文案。抽成 static helper 让 type-checker 不用穿透整个 body 推断类型
-    private static func deleteMessage(_ entry: WorkEntryRecord?) -> String {
+    /// R42-E：从 private 改 internal 让单测可覆盖 nil → "" 的兜底契约
+    static func deleteMessage(_ entry: WorkEntryRecord?) -> String {
         entry.map { "「\($0.title)」将被删除。" } ?? ""
     }
 

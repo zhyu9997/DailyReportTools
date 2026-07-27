@@ -306,4 +306,69 @@ import Foundation
         #expect(Recurrence.label(unit: .monthly, interval: 1, weekdays: [], monthDays: []) == "每月")
         #expect(Recurrence.label(unit: .monthly, interval: 3, weekdays: [], monthDays: []) == "每3月")
     }
+
+    // MARK: - R42-B: label() max(1, interval) 兜底分支
+    // label 三分支都有 `let n = max(1, interval)`，把非法 interval（0/负数）兜为 1。
+    // 用户手改 plist / 历史脏数据可能写入非法 interval，display 不该出现「每0天」/「每-3周」。
+    // 原测试 interval 都 ≥ 1，max(1,_) 分支从未覆盖
+    @Test func labelDailyWithZeroOrNegativeIntervalFallsBackToOne() {
+        #expect(Recurrence.label(unit: .daily, interval: 0, weekdays: [], monthDays: []) == "每天")
+        #expect(Recurrence.label(unit: .daily, interval: -5, weekdays: [], monthDays: []) == "每天")
+    }
+
+    @Test func labelWeeklyWithZeroOrNegativeIntervalFallsBackToOne() {
+        // 兜底后 n=1 → prefix = "每周"，再加 weekdays 拼接
+        #expect(Recurrence.label(unit: .weekly, interval: 0, weekdays: [2, 4], monthDays: []) == "每周一三")
+        #expect(Recurrence.label(unit: .weekly, interval: -2, weekdays: [], monthDays: []) == "每周")
+    }
+
+    @Test func labelMonthlyWithZeroOrNegativeIntervalFallsBackToOne() {
+        #expect(Recurrence.label(unit: .monthly, interval: 0, weekdays: [], monthDays: [1, 15]) == "每月1日、15日")
+        #expect(Recurrence.label(unit: .monthly, interval: -1, weekdays: [], monthDays: []) == "每月")
+    }
+
+    // MARK: - R42-C: nextFutureDate() max(1, interval) 兜底分支
+    // nextFutureDate 三分支都有 `let n = max(1, interval)`，interval ≤ 0 时兜为 1。
+    // 这是防 division-by-zero / 死循环的关键防御（daily 用 stepSeconds=TimeInterval(n)*.day
+    // 算 jumps=Int(elapsed/stepSeconds)；若 n=0 导致 stepSeconds=0 会触发除零）。
+    // 原测试 interval 都 ≥ 1，max(1,_) 分支从未覆盖。
+    // 用「与 interval=1 等价」做属性测试，避开 Calendar.current 与测试 cal 时区差异
+    @Test func nextFutureDateDailyWithZeroIntervalEqualsIntervalOne() {
+        let base = Self.makeDate(2024, 1, 1, 9, 0)
+        let now = Self.makeDate(2024, 6, 15, 12, 0)
+        let withZero = Recurrence.nextFutureDate(unit: .daily, interval: 0,
+                                                   weekdays: [], monthDays: [],
+                                                   after: base, now: now)
+        let withOne = Recurrence.nextFutureDate(unit: .daily, interval: 1,
+                                                  weekdays: [], monthDays: [],
+                                                  after: base, now: now)
+        #expect(withZero != nil)
+        #expect(withZero == withOne, "interval=0 应兜为 1，行为与 interval=1 完全一致")
+    }
+
+    @Test func nextFutureDateWeeklyWithNegativeIntervalEqualsIntervalOne() {
+        let base = Self.makeDate(2024, 1, 1, 9, 0)
+        let now = Self.makeDate(2024, 3, 15, 12, 0)
+        let withNeg = Recurrence.nextFutureDate(unit: .weekly, interval: -5,
+                                                  weekdays: [2, 4], monthDays: [],
+                                                  after: base, now: now)
+        let withOne = Recurrence.nextFutureDate(unit: .weekly, interval: 1,
+                                                  weekdays: [2, 4], monthDays: [],
+                                                  after: base, now: now)
+        #expect(withNeg != nil)
+        #expect(withNeg == withOne, "interval=-5 应兜为 1，与 interval=1 一致")
+    }
+
+    @Test func nextFutureDateMonthlyWithZeroIntervalEqualsIntervalOne() {
+        let base = Self.makeDate(2024, 1, 15, 9, 0)
+        let now = Self.makeDate(2024, 6, 20, 12, 0)
+        let withZero = Recurrence.nextFutureDate(unit: .monthly, interval: 0,
+                                                   weekdays: [], monthDays: [1, 15],
+                                                   after: base, now: now)
+        let withOne = Recurrence.nextFutureDate(unit: .monthly, interval: 1,
+                                                  weekdays: [], monthDays: [1, 15],
+                                                  after: base, now: now)
+        #expect(withZero != nil)
+        #expect(withZero == withOne, "interval=0 应兜为 1，与 interval=1 一致")
+    }
 }

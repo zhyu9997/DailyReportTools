@@ -228,8 +228,9 @@ struct HistoryView: View {
     /// 跨 kind 转换时清理对方 kind 的专属字段，避免脏数据
     /// （例：周期性 planned 拖到 blocker 列后，若不清 isRecurring 会变成「问题 + 周期性计划」怪胎，
     /// sweep 不再推进它，UI 上仍带 repeat 标记却永不复生）
-    private static func convertKind(to kind: WorkKind,
-                                    then extra: ((inout WorkEntryRecord) -> Void)? = nil) -> (inout WorkEntryRecord) -> Void {
+    /// R42-A：从 private 改 internal 以便单测直接覆盖 6 个转换路径（dropDestination 的核心副作用）
+    static func convertKind(to kind: WorkKind,
+                            then extra: ((inout WorkEntryRecord) -> Void)? = nil) -> (inout WorkEntryRecord) -> Void {
         return { rec in
             let oldKind = rec.kind
             rec.kind = kind
