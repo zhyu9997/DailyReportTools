@@ -290,4 +290,20 @@ import Foundation
         // 单字版本（日/一/二/.../六），与双字版 weekdayLong（周日/周一/...）区分
         #expect(s.count == 1)
     }
+
+    // MARK: - R40-D: Recurrence.label 空 weekdays/monthDays 分支
+    // label() 内 `guard !weekdays.isEmpty else { return prefix }` 与 monthDays 同款分支：
+    // 当用户只选 unit + interval 但未指定具体 weekday/monthDay 时（UI 中途状态或旧数据残留），
+    // 返回纯前缀（"每周"/"每 N 周"），不应继续往下拼空数组。原版 labelWeekly / labelMonthly
+    // 测试都传非空数组，guard 分支从未被钉死
+    @Test func labelWeeklyWithEmptyWeekdaysReturnsPrefix() {
+        #expect(Recurrence.label(unit: .weekly, interval: 1, weekdays: [], monthDays: []) == "每周")
+        // interval>1 时仍走 prefix 分支（不应因空数组退化成 "每周1"）
+        #expect(Recurrence.label(unit: .weekly, interval: 2, weekdays: [], monthDays: []) == "每2周")
+    }
+
+    @Test func labelMonthlyWithEmptyMonthDaysReturnsPrefix() {
+        #expect(Recurrence.label(unit: .monthly, interval: 1, weekdays: [], monthDays: []) == "每月")
+        #expect(Recurrence.label(unit: .monthly, interval: 3, weekdays: [], monthDays: []) == "每3月")
+    }
 }

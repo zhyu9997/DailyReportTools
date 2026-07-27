@@ -39,6 +39,27 @@ import Foundation
         #expect(WorkKind.blocker.color(status: .closed) == BlockerStatus.closed.swiftUIColor)
     }
 
+    // MARK: - R40-H: WorkKind.color(status:) 全组合参数化
+    // 原 workKindColorDelegatesToBlockerStatusWhenBlocker 只覆盖 ongoing+closed 两个 status，
+    // 且 done/planned 不传 status 参数（无法验证「忽略 status」契约）。一旦 done/planned 分支
+    // 误改成 status.swiftUIColor，原测试不会发现。参数化覆盖全 9 种 (kind × status) 组合
+    @Test(arguments: BlockerStatus.allCases)
+    func blockerColorDelegatesToStatusForAllCases(_ s: BlockerStatus) {
+        #expect(WorkKind.blocker.color(status: s) == s.swiftUIColor)
+    }
+
+    @Test(arguments: BlockerStatus.allCases)
+    func doneColorIgnoresStatusParameter(_ s: BlockerStatus) {
+        // done 分支应忽略 status 始终返回 .green（不看 status）
+        #expect(WorkKind.done.color(status: s) == .green)
+    }
+
+    @Test(arguments: BlockerStatus.allCases)
+    func plannedColorIgnoresStatusParameter(_ s: BlockerStatus) {
+        // planned 分支应忽略 status 始终返回 .blue
+        #expect(WorkKind.planned.color(status: s) == .blue)
+    }
+
     // MARK: - BlockerStatus
     @Test(arguments: BlockerStatus.allCases)
     func blockerStatusLocalizedNameNonEmpty(_ s: BlockerStatus) {

@@ -32,8 +32,7 @@ final class ExportService {
 
     /// 周报 XLSX：仅「完成」任务，按实际完成日（归属日）排序、带「星期」列
     func exportWeekDoneXLSX(_ entries: [WorkEntryRecord], title: String) throws {
-        let done = entries.filter { $0.kind == .done }
-            .sorted { ($0.finishDate ?? $0.timestamp) < ($1.finishDate ?? $1.timestamp) }
+        let done = Self.doneEntriesSorted(entries)
         let rows = done.map { e -> [String] in
             let belong = e.finishDate ?? e.timestamp
             return [Self.weekdayName(belong), belong.isoDay, e.title, e.detail]
@@ -42,6 +41,14 @@ final class ExportService {
                       sheetName: Self.sanitizeSheetName(title),
                       header: ["星期", "日期", "标题", "详情"],
                       rows: rows)
+    }
+
+    /// 周报 XLSX 用的「完成」子集：过滤 + 按归属日（finishDate ?? timestamp）升序。
+    /// R40-G 抽出：原版 exportWeekDoneXLSX 内联 filter+sort，绑死 NSSavePanel 无法单测。
+    /// 「归属日」语义是周报按完成日分天的核心（提前完成的任务落回实际完成那天），改错会让分组错位
+    static func doneEntriesSorted(_ entries: [WorkEntryRecord]) -> [WorkEntryRecord] {
+        entries.filter { $0.kind == .done }
+            .sorted { ($0.finishDate ?? $0.timestamp) < ($1.finishDate ?? $1.timestamp) }
     }
 
     /// 中文星期名（Calendar weekday：1=周日 … 7=周六）。

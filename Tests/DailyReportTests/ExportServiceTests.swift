@@ -206,6 +206,54 @@ import Foundation
         // "a,b" 应被 csvEscape 包成 "\"a,b\""
         #expect(row.contains("\"a,b\""))
     }
+
+    // MARK: - R40-G: doneEntriesSorted 抽 helper 单测
+    // 原 exportWeekDoneXLSX 内联 filter+sort 绑死 NSSavePanel 无法单测。
+    // 抽出后可直接钉死：done 通过 / planned+blocker 过滤掉 / 按 finishDate ?? timestamp 升序
+    @Test func doneEntriesSortedFiltersOutPlannedAndBlocker() {
+        let entries = [
+            TestEntry.entry(id: UUID(), title: "完成", detail: "", kind: .done, timestamp: Date()),
+            TestEntry.entry(id: UUID(), title: "计划", detail: "", kind: .planned, timestamp: Date()),
+            TestEntry.entry(id: UUID(), title: "问题", detail: "", kind: .blocker, timestamp: Date()),
+        ]
+        let result = ExportService.doneEntriesSorted(entries)
+        #expect(result.count == 1)
+        #expect(result.first?.title == "完成")
+    }
+
+    @Test func doneEntriesSortedOrdersByFinishDateWhenPresent() {
+        // 两条 done：early.finishDate < late.finishDate，乱序传入应按 finishDate 升序
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: Date())
+        var early = TestEntry.entry(id: UUID(), title: "早", detail: "", kind: .done,
+                                     timestamp: day.addingTimeInterval(9 * 3600))
+        early.finishDate = day.addingTimeInterval(10 * 3600)   // 10:00
+        var late = TestEntry.entry(id: UUID(), title: "晚", detail: "", kind: .done,
+                                    timestamp: day.addingTimeInterval(14 * 3600))
+        late.finishDate = day.addingTimeInterval(16 * 3600)   // 16:00
+
+        // 故意倒序传入
+        let result = ExportService.doneEntriesSorted([late, early])
+        #expect(result.count == 2)
+        #expect(result[0].title == "早")
+        #expect(result[1].title == "晚")
+    }
+
+    @Test func doneEntriesSortedFallsBackToTimestampWhenFinishDateNil() {
+        // finishDate=nil → fallback timestamp。done 任务用户没填 finishDate 时不应 crash / 错位
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: Date())
+        var withFinish = TestEntry.entry(id: UUID(), title: "有完成日", detail: "", kind: .done,
+                                          timestamp: day.addingTimeInterval(9 * 3600))
+        withFinish.finishDate = day.addingTimeInterval(18 * 3600)   // 较晚
+        let noFinish = TestEntry.entry(id: UUID(), title: "无完成日", detail: "", kind: .done,
+                                        timestamp: day.addingTimeInterval(8 * 3600))   // timestamp 更早
+
+        let result = ExportService.doneEntriesSorted([withFinish, noFinish])
+        // noFinish 用 timestamp（8h）< withFinish.finishDate（18h），应排前面
+        #expect(result[0].title == "无完成日")
+        #expect(result[1].title == "有完成日")
+    }
 }
 
 /// 测试 fixture：构造 WorkEntryRecord 时省去 14 字段的样板

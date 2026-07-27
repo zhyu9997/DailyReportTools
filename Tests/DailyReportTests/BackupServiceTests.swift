@@ -212,6 +212,126 @@ import Foundation
         #expect(decoded.tags.first?.colorHex == "#FF0000")
     }
 
+    // MARK: - R40-A: Snapshot 全字段 round-trip
+    // 原 snapshotRoundTrip 只覆盖 1 个 TagDTO，6 张表里其余 5 张表的字段（finishDate / helper /
+    // recurrenceWeekdays / recurrenceMonthDays / reviewIds / meetingId / order 等）从未走过 encode→decode。
+    // 一旦某个 DTO 字段类型改了（如 Date 变 String），单测发现不了，要等 restore 实际丢字段
+    @Test func snapshotRoundTripPreservesAllEntityFields() throws {
+        let tagId = UUID()
+        let reportId = UUID()
+        let todoId = UUID()
+        let entryId = UUID()
+        let meetingId = UUID()
+        let reviewId = UUID()
+
+        let original = BackupService.Snapshot(
+            exportedAt: Self.makeDate(2026, 7, 27),
+            tags: [BackupService.TagDTO(id: tagId, name: "标签", colorHex: "#ABCDEF",
+                                         createdAt: Self.makeDate(2026, 7, 20))],
+            reports: [BackupService.ReportDTO(
+                id: reportId, date: Self.makeDate(2026, 7, 27), note: "日报备注",
+                createdAt: Self.makeDate(2026, 7, 27), updatedAt: Self.makeDate(2026, 7, 27),
+                tagIds: [tagId]
+            )],
+            todos: [BackupService.TodoDTO(
+                id: todoId, title: "待办", notes: "备注", isDone: true,
+                dueDate: Self.makeDate(2026, 8, 1), createdAt: Self.makeDate(2026, 7, 25),
+                completedAt: Self.makeDate(2026, 7, 26), tagIds: [tagId]
+            )],
+            entries: [BackupService.EntryDTO(
+                id: entryId, title: "任务", detail: "详情",
+                timestamp: Self.makeDate(2026, 7, 27),
+                kind: WorkKind.planned.rawValue,
+                finishDate: Self.makeDate(2026, 7, 28), helper: "协助者",
+                blockerStatus: BlockerStatus.monitor.rawValue,
+                priority: Priority.high.rawValue,
+                isRecurring: true,
+                recurrenceUnit: RecurrenceUnit.weekly.rawValue,
+                recurrenceInterval: 2,
+                recurrenceWeekdays: [2, 4, 6],
+                recurrenceMonthDays: [],
+                createdAt: Self.makeDate(2026, 7, 20),
+                tagIds: [tagId]
+            )],
+            meetings: [BackupService.MeetingDTO(
+                id: meetingId, topic: "会议", summary: "纪要",
+                timestamp: Self.makeDate(2026, 7, 27),
+                createdAt: Self.makeDate(2026, 7, 20),
+                isRecurring: true,
+                recurrenceUnit: RecurrenceUnit.monthly.rawValue,
+                recurrenceInterval: 1,
+                recurrenceWeekdays: [],
+                recurrenceMonthDays: [1, 15],
+                tagIds: [tagId],
+                reviewIds: [reviewId]
+            )],
+            reviews: [BackupService.ReviewDTO(
+                id: reviewId, reviewer: "评审人", opinion: "通过",
+                order: 1, createdAt: Self.makeDate(2026, 7, 27),
+                meetingId: meetingId
+            )]
+        )
+        let data = try BackupService.encode(original)
+        let decoded = try BackupService.decode(data)
+
+        // 6 张主表都应有 1 条
+        #expect(decoded.tags.count == 1)
+        #expect(decoded.reports.count == 1)
+        #expect(decoded.todos.count == 1)
+        #expect(decoded.entries.count == 1)
+        #expect(decoded.meetings.count == 1)
+        #expect(decoded.reviews.count == 1)
+
+        // Tag
+        let t = decoded.tags.first!
+        #expect(t.id == tagId)
+        #expect(t.name == "标签")
+        #expect(t.colorHex == "#ABCDEF")
+
+        // Report
+        let r = decoded.reports.first!
+        #expect(r.id == reportId)
+        #expect(r.note == "日报备注")
+        #expect(r.date == Self.makeDate(2026, 7, 27))
+        #expect(r.updatedAt == Self.makeDate(2026, 7, 27))
+        #expect(r.tagIds == [tagId])
+
+        // Todo
+        let td = decoded.todos.first!
+        #expect(td.id == todoId)
+        #expect(td.isDone == true)
+        #expect(td.dueDate == Self.makeDate(2026, 8, 1))
+        #expect(td.completedAt == Self.makeDate(2026, 7, 26))
+        #expect(td.tagIds == [tagId])
+
+        // Entry（finishDate / helper / recurrenceWeekdays 等之前未覆盖的字段）
+        let e = decoded.entries.first!
+        #expect(e.id == entryId)
+        #expect(e.finishDate == Self.makeDate(2026, 7, 28))
+        #expect(e.helper == "协助者")
+        #expect(e.recurrenceWeekdays == [2, 4, 6])
+        #expect(e.recurrenceInterval == 2)
+        #expect(e.kind == WorkKind.planned.rawValue)
+        #expect(e.blockerStatus == BlockerStatus.monitor.rawValue)
+        #expect(e.priority == Priority.high.rawValue)
+        #expect(e.tagIds == [tagId])
+
+        // Meeting（recurrenceMonthDays / reviewIds 之前未覆盖）
+        let m = decoded.meetings.first!
+        #expect(m.id == meetingId)
+        #expect(m.recurrenceMonthDays == [1, 15])
+        #expect(m.reviewIds == [reviewId])
+        #expect(m.tagIds == [tagId])
+
+        // Review（meetingId / order 之前未覆盖）
+        let rv = decoded.reviews.first!
+        #expect(rv.id == reviewId)
+        #expect(rv.reviewer == "评审人")
+        #expect(rv.opinion == "通过")
+        #expect(rv.order == 1)
+        #expect(rv.meetingId == meetingId)
+    }
+
     // MARK: - decode 版本兼容 / 坏输入（R19 补：覆盖 DecodeError 分支）
 
     @Test func decodeRejectsHigherSchemaVersion() throws {

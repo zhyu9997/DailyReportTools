@@ -159,7 +159,9 @@ enum BackupService {
     /// 把 Snapshot 全量插入到给定 db（restore 用；不清理，假定 db 已是空库或即将提交）
     /// R31-B：4 张中间表 INSERT 走 RecordQueries.insertTagLinks，与 replaceTagLinks 共享一份 SQL，
     /// 改 schema（如重命名 ownerColumn）只动 TagLinkTable enum 一处
-    private static func insertSnapshot(_ s: Snapshot, into db: Database) throws {
+    /// R40-F：private → internal，让测试可直接调用（隔离 restore 的 truncate + VACUUM 包装层，
+    /// 单独钉死 DTO→Record 字段映射）
+    static func insertSnapshot(_ s: Snapshot, into db: Database) throws {
         // Tags
         for t in s.tags {
             var rec = TagRecord(id: t.id, name: t.name, colorHex: t.colorHex, createdAt: t.createdAt)

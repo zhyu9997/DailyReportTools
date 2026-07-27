@@ -273,4 +273,78 @@ import GRDB
         #expect(e.priority == Priority.high.rawValue)
         #expect(e.tagIds == [t.id])
     }
+
+    // MARK: - R40-F: insertSnapshot 直接单测（隔离 restore 包装层）
+    // restore 内部调 insertSnapshot，但还包了 pre-import 快照 + truncateAll + VACUUM。
+    // restore 失败时无法定位是 insertSnapshot 还是包装层。直接调 insertSnapshot 钉死 DTO→Record
+    // 字段映射 + 4 张中间表 INSERT，覆盖 6 主表 + 2 张关键 link 表（tag_work_entry / tag_meeting）
+    @Test func insertSnapshotWritesAllEntitiesAndRelationsDirectly() throws {
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+
+        let tagId = UUID()
+        let entryId = UUID()
+        let meetingId = UUID()
+        let reviewId = UUID()
+        let snap = BackupService.Snapshot(
+            exportedAt: Date(),
+            tags: [BackupService.TagDTO(id: tagId, name: "t", colorHex: "#123456", createdAt: Date())],
+            reports: [],
+            todos: [],
+            entries: [BackupService.EntryDTO(
+                id: entryId, title: "E", detail: "d", timestamp: Date(),
+                kind: WorkKind.done.rawValue, finishDate: nil, helper: nil,
+                blockerStatus: BlockerStatus.ongoing.rawValue,
+                priority: Priority.medium.rawValue,
+                isRecurring: false, recurrenceUnit: RecurrenceUnit.daily.rawValue,
+                recurrenceInterval: 1, recurrenceWeekdays: [], recurrenceMonthDays: [],
+                createdAt: Date(), tagIds: [tagId]
+            )],
+            meetings: [BackupService.MeetingDTO(
+                id: meetingId, topic: "M", summary: "s", timestamp: Date(),
+                createdAt: Date(), isRecurring: false,
+                recurrenceUnit: RecurrenceUnit.daily.rawValue,
+                recurrenceInterval: 1, recurrenceWeekdays: [], recurrenceMonthDays: [],
+                tagIds: [tagId], reviewIds: [reviewId]
+            )],
+            reviews: [BackupService.ReviewDTO(
+                id: reviewId, reviewer: "R", opinion: "ok", order: 0,
+                createdAt: Date(), meetingId: meetingId
+            )]
+        )
+
+        try queue.write { db in
+            try BackupService.insertSnapshot(snap, into: db)
+        }
+
+        // 6 主表计数
+        let tags = try queue.read { db in try TagRecord.fetchAll(db) }
+        #expect(tags.count == 1)
+        #expect(tags.first?.name == "t")
+        #expect(tags.first?.colorHex == "#123456")
+
+        let entries = try queue.read { db in try WorkEntryRecord.fetchAll(db) }
+        #expect(entries.count == 1)
+        #expect(entries.first?.title == "E")
+
+        let meetings = try queue.read { db in try MeetingRecord.fetchAll(db) }
+        #expect(meetings.count == 1)
+        #expect(meetings.first?.topic == "M")
+
+        let reviews = try queue.read { db in try ReviewRecord.fetchAll(db) }
+        #expect(reviews.count == 1)
+        #expect(reviews.first?.reviewer == "R")
+        #expect(reviews.first?.meetingId == meetingId)
+
+        // 2 张关键中间表（entry / meeting 各链 1 个 tag）
+        let entryTagLinks = try queue.read { db in try TagWorkEntry.fetchAll(db) }
+        #expect(entryTagLinks.count == 1)
+        #expect(entryTagLinks.first?.tagId == tagId)
+        #expect(entryTagLinks.first?.entryId == entryId)
+
+        let meetingTagLinks = try queue.read { db in try TagMeeting.fetchAll(db) }
+        #expect(meetingTagLinks.count == 1)
+        #expect(meetingTagLinks.first?.tagId == tagId)
+        #expect(meetingTagLinks.first?.meetingId == meetingId)
+    }
 }

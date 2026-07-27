@@ -1,4 +1,5 @@
 import Testing
+import SwiftUI
 import Foundation
 @testable import DailyReport
 
@@ -142,5 +143,25 @@ import Foundation
         #expect(rec.blockerStatus == BlockerStatus.closed)
         #expect(rec.priority == Priority.high)
         #expect(rec.recurrenceUnit == RecurrenceUnit.monthly)
+    }
+
+    // MARK: - R40-J: TagRecord.swiftUIColor 非法 hex fallback
+    // swiftUIColor { Color(hex: colorHex) ?? .accentColor }：非法/空 hex → Color(hex:) 返回 nil → fallback .accentColor。
+    // 这条 fallback 是用户改坏 colorHex 或老数据残留时的 UI 不崩兜底，原版从未直接覆盖
+    @Test func tagRecordSwiftUIColorFallsBackToAccentForInvalidHex() {
+        let rec = TagRecord(id: UUID(), name: "x", colorHex: "INVALID_HEX", createdAt: Date())
+        #expect(rec.swiftUIColor == .accentColor)
+    }
+
+    @Test func tagRecordSwiftUIColorFallsBackToAccentForEmptyHex() {
+        let rec = TagRecord(id: UUID(), name: "x", colorHex: "", createdAt: Date())
+        #expect(rec.swiftUIColor == .accentColor)
+    }
+
+    @Test func tagRecordSwiftUIColorParsesValidHex() {
+        // 合法 hex 不应走 fallback（这里不直接判 == Color(hex:)，因为 Color == 在不同 ColorSpace
+        // 可能误判；改判 hexString round-trip，确保走的是 Color(hex:) 分支而非 fallback）
+        let rec = TagRecord(id: UUID(), name: "x", colorHex: "#AB12CD", createdAt: Date())
+        #expect(rec.swiftUIColor.hexString == "#AB12CD")
     }
 }

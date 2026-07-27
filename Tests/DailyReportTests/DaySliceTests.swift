@@ -119,4 +119,28 @@ import Foundation
         #expect(DaySlice.plannedSort(mediumToday, lowToday) == true)
         #expect(DaySlice.plannedSort(lowToday, highTomorrow) == false)
     }
+
+    // MARK: - R40-E: plannedSort 同优先级 + 一侧 finishDate=nil 的兜底分支
+    // plannedSort 第 2 段 `lhs.finishDate ?? lhs.timestamp`：原 plannedSortOrdersByPriorityThenFinishDate
+    // 两侧都给了 finishDate，nil fallback 分支从未被覆盖。当 planned 任务还没排期完成日时
+    // （用户创建 planned 但 finishDate 留空），应回退到 timestamp 比较，不能 crash / 静默错位
+    @Test func plannedSortSamePriorityFallsBackToTimestampWhenFinishDateNil() {
+        // 同优先级：noFinish 侧 finishDate=nil → fallback 到 timestamp（earlierTs）
+        // withFinish 侧 finishDate=laterFinish。fallback 后 noFinish 用 earlierTs < laterFinish，应排前面
+        let earlierTs = Self.makeDate(2026, 7, 26, 9, 0)
+        let laterTs = Self.makeDate(2026, 7, 27, 9, 0)
+        let laterFinish = Self.makeDate(2026, 7, 28, 9, 0)
+        let withFinish = Self.makeEntry(kind: .planned, timestamp: laterTs, finishDate: laterFinish)
+        let noFinish = Self.makeEntry(kind: .planned, timestamp: earlierTs, finishDate: nil)
+        #expect(DaySlice.plannedSort(noFinish, withFinish) == true)
+        #expect(DaySlice.plannedSort(withFinish, noFinish) == false)
+    }
+
+    @Test func plannedSortSamePriorityBothNilFinishDateUsesTimestamp() {
+        // 两侧都 nil：纯 timestamp 比较（不应因双 nil 走到不可比分支）
+        let earlier = Self.makeEntry(kind: .planned, timestamp: Self.makeDate(2026, 7, 26, 9, 0), finishDate: nil)
+        let later = Self.makeEntry(kind: .planned, timestamp: Self.makeDate(2026, 7, 27, 9, 0), finishDate: nil)
+        #expect(DaySlice.plannedSort(earlier, later) == true)
+        #expect(DaySlice.plannedSort(later, earlier) == false)
+    }
 }
