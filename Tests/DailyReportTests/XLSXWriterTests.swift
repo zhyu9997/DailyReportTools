@@ -126,4 +126,40 @@ import Foundation
         let b = Data([3, 2, 1])
         #expect(ZipBuilder.crc32(a) != ZipBuilder.crc32(b))
     }
+
+    // MARK: - dosDateTime（R37-F：边界分支零直接覆盖）
+
+    @Test func dosDateTimeClampsYearBefore1980() {
+        // DOS 格式最低年份 1980；更早的日期 year 被 clamp 到 1980，month/day 保留
+        // （实现只 clamp year，不重置 month/day；这符合 ZIP 规范对"早于 1980"的最低位兜底语义）
+        let cal = Calendar(identifier: .gregorian)
+        let oldDate = cal.date(from: DateComponents(year: 1970, month: 6, day: 15, hour: 12, minute: 30))!
+        let (dosDate, dosTime) = ZipBuilder().dosDateTime(oldDate)
+        // year=1980, month=6, day=15 → ((0)<<9) | (6<<5) | 15 = 192 + 15 = 207
+        #expect(dosDate == 207)
+        // hour=12, minute=30 保留 → (12<<11) | (30<<5) = 24576 + 960 = 25536
+        #expect(dosTime == UInt16((12 << 11) | (30 << 5)))
+    }
+
+    @Test func dosDateTimePacksNormalDateCorrectly() {
+        // 2024-06-15 14:30 → 验证位打包
+        let cal = Calendar(identifier: .gregorian)
+        let d = cal.date(from: DateComponents(year: 2024, month: 6, day: 15, hour: 14, minute: 30))!
+        let (dosDate, dosTime) = ZipBuilder().dosDateTime(d)
+        // date = ((2024-1980)<<9) | (6<<5) | 15 = 44*512 + 192 + 15 = 22735
+        let expected = UInt16((44 << 9) | (6 << 5) | 15)
+        #expect(dosDate == expected)
+        // time = (14<<11) | (30<<5) = 14*2048 + 30*32 = 29632
+        let expectedTime = UInt16((14 << 11) | (30 << 5))
+        #expect(dosTime == expectedTime)
+    }
+
+    @Test func dosDateTimeClampsYearExactlyAt1980() {
+        // 边界：1980-01-01 00:00 不被 clamp
+        let cal = Calendar(identifier: .gregorian)
+        let d = cal.date(from: DateComponents(year: 1980, month: 1, day: 1, hour: 0, minute: 0))!
+        let (dosDate, dosTime) = ZipBuilder().dosDateTime(d)
+        #expect(dosDate == UInt16((0 << 9) | (1 << 5) | 1))
+        #expect(dosTime == 0)
+    }
 }

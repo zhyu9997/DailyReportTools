@@ -707,4 +707,76 @@ import GRDB
         let sortedOrders = reviews.map(\.order).sorted()
         #expect(sortedOrders == [0, 1])
     }
+
+    // MARK: - getOrCreateTag（R37-B：R33-C 抽出但三分支无直接覆盖）
+
+    @Test func getOrCreateTagCreatesWhenNameAbsent() throws {
+        let store = try Self.makeStore()
+        let tag = try store.getOrCreateTag(name: "新标签", colorHex: "#FF0000")
+        #expect(tag.name == "新标签")
+        #expect(tag.colorHex == "#FF0000")
+        #expect(store.tags.count == 1)
+    }
+
+    @Test func getOrCreateTagReusesExistingForSameName() throws {
+        let store = try Self.makeStore()
+        let first = try store.getOrCreateTag(name: "重复", colorHex: "#FF0000")
+        // 第二次同名调用：应复用 first，而不是抛 UNIQUE 约束错（R33-C 核心 fix）
+        let second = try store.getOrCreateTag(name: "重复", colorHex: "#00FF00")
+        #expect(second.id == first.id)
+        // tags 表只有 1 条
+        #expect(store.tags.count == 1)
+        // colorHex 不被覆盖（保持首次写入的值）
+        #expect(second.colorHex == "#FF0000")
+    }
+
+    @Test func getOrCreateTagIsCaseInsensitive() throws {
+        // 大小写不敏感匹配（name.lowercased() 比较），避免「Work」与「work」撞 UNIQUE 索引
+        let store = try Self.makeStore()
+        let first = try store.getOrCreateTag(name: "Work", colorHex: "#FF0000")
+        let second = try store.getOrCreateTag(name: "WORK", colorHex: "#00FF00")
+        #expect(second.id == first.id)
+        #expect(store.tags.count == 1)
+    }
+
+    // MARK: - updateTag（R37-C：选择性更新 if let 分支无直接覆盖）
+
+    @Test func updateTagChangesOnlyNameWhenColorHexNil() throws {
+        let store = try Self.makeStore()
+        let tag = try store.getOrCreateTag(name: "原名", colorHex: "#FF0000")
+        try store.updateTag(tag.id, name: "新名")   // 不传 colorHex
+        let after = store.tags.first { $0.id == tag.id }
+        #expect(after?.name == "新名")
+        // colorHex 保留原值
+        #expect(after?.colorHex == "#FF0000")
+    }
+
+    @Test func updateTagChangesOnlyColorHexWhenNameNil() throws {
+        let store = try Self.makeStore()
+        let tag = try store.getOrCreateTag(name: "不变", colorHex: "#FF0000")
+        try store.updateTag(tag.id, colorHex: "#00FF00")   // 不传 name
+        let after = store.tags.first { $0.id == tag.id }
+        #expect(after?.colorHex == "#00FF00")
+        // name 保留原值
+        #expect(after?.name == "不变")
+    }
+
+    @Test func updateTagChangesBothWhenBothProvided() throws {
+        let store = try Self.makeStore()
+        let tag = try store.getOrCreateTag(name: "原", colorHex: "#FF0000")
+        try store.updateTag(tag.id, name: "新", colorHex: "#00FF00")
+        let after = store.tags.first { $0.id == tag.id }
+        #expect(after?.name == "新")
+        #expect(after?.colorHex == "#00FF00")
+    }
+
+    @Test func updateTagIsNoOpWhenBothNil() throws {
+        // 都不传：等价于 no-op，原值不变（这条分支以前完全无覆盖）
+        let store = try Self.makeStore()
+        let tag = try store.getOrCreateTag(name: "不变", colorHex: "#FF0000")
+        try store.updateTag(tag.id)
+        let after = store.tags.first { $0.id == tag.id }
+        #expect(after?.name == "不变")
+        #expect(after?.colorHex == "#FF0000")
+    }
 }

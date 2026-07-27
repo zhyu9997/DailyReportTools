@@ -272,4 +272,22 @@ import Foundation
             #expect(Recurrence.weekdayLong(wd) == "周" + Recurrence.weekdaySymbol(wd))
         }
     }
+
+    // MARK: - R37-G: weekdaySymbol 越界直接单测（R35-F 只覆盖了 weekdayLong 越界）
+    // weekdaySymbol 是 weekdayLong 的底层数据源（单字版），ExportService.weekdayName 也走它；
+    // 越界返回 "?" 是 UI 显示「?」而非 crash 的兜底，必须有直接覆盖。
+
+    @Test func weekdaySymbolReturnsQuestionMarkOutOfBounds() {
+        #expect(Recurrence.weekdaySymbol(0) == "?")
+        #expect(Recurrence.weekdaySymbol(8) == "?")
+        #expect(Recurrence.weekdaySymbol(-1) == "?")
+    }
+
+    @Test(arguments: 1...7)
+    func weekdaySymbolReturnsNonEmptySingleChar(_ wd: Int) {
+        let s = Recurrence.weekdaySymbol(wd)
+        #expect(!s.isEmpty)
+        // 单字版本（日/一/二/.../六），与双字版 weekdayLong（周日/周一/...）区分
+        #expect(s.count == 1)
+    }
 }

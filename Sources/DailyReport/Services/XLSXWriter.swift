@@ -191,7 +191,9 @@ struct ZipBuilder {
         return output
     }
 
-    private func dosDateTime(_ date: Date) -> (UInt16, UInt16) {
+    /// R37-F：从 private 改 internal 让单测能直接覆盖边界分支（year<1980 clamp / nil clamp / 位运算正确性）。
+    /// ZIP 文件头时间戳字段算错会让生成的 XLSX 在 Windows Excel 显示「文件已损坏」（macOS Numbers 容错更强）
+    func dosDateTime(_ date: Date) -> (UInt16, UInt16) {
         let cal = Calendar(identifier: .gregorian)
         let c = cal.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let year = max(1980, c.year ?? 1980)
