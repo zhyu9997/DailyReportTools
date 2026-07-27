@@ -111,6 +111,18 @@ final class AppStore {
         return rec
     }
 
+    /// 按名称查找或创建 tag（case-insensitive 重名匹配 → 复用，避免 UNIQUE 索引抛错）。
+    /// R33-C 抽出：原版 WorkEntryCard.addNewTag 与 TagPicker.add 各写一份「查重 + insert」模板，
+    /// 且 WorkEntryCard 漏了重名查重（用户输入已存在 tag 名时会被 v4 UNIQUE 索引拒绝并弹错）。
+    /// 与 getOrCreateReport 对称，集中后调用方只关心结果
+    func getOrCreateTag(name: String, colorHex: String) throws -> TagRecord {
+        let lower = name.lowercased()
+        if let existing = tags.first(where: { $0.name.lowercased() == lower }) {
+            return existing
+        }
+        return try insertTag(NewTag(name: name, colorHex: colorHex))
+    }
+
     func updateTag(_ id: UUID, name: String? = nil, colorHex: String? = nil) throws {
         try writeOrThrow { db in
             guard var rec = try TagRecord.fetchOne(db, key: id.uuidString) else { return }

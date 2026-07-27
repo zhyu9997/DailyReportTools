@@ -28,12 +28,7 @@ private struct CollapsiblePrioritySection<Content: View>: View {
                         .font(.caption)
                     Text("\(priority.localizedName)优先级")
                         .font(.caption.weight(.semibold))
-                    Text("\(count)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(priority.swiftUIColor)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(priority.swiftUIColor.opacity(0.15))
-                        .clipShape(Capsule())
+                    BadgeChip.count(count, color: priority.swiftUIColor)
                     Spacer()
                 }
                 .padding(.horizontal, 4)

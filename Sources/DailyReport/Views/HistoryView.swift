@@ -176,12 +176,7 @@ struct HistoryView: View {
             HStack(spacing: 6) {
                 Image(systemName: kind.icon).foregroundStyle(color)
                 Text(kind.rawValue).font(.headline)
-                Text("\(items.count)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(color)
-                    .padding(.horizontal, 6).padding(.vertical, 1)
-                    .background(color.opacity(0.15))
-                    .clipShape(Capsule())
+                BadgeChip.count(items.count, color: color, size: .large)
                 Spacer()
             }
             .padding(.horizontal, 4)
@@ -407,12 +402,7 @@ struct HistoryView: View {
                     .font(.caption)
                 Text(s.localizedName)
                     .font(.caption.weight(.semibold))
-                Text("\(items.count)")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(s.swiftUIColor)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(s.swiftUIColor.opacity(0.15))
-                    .clipShape(Capsule())
+                BadgeChip.count(items.count, color: s.swiftUIColor)
                 Spacer()
             }
             .padding(.horizontal, 4)

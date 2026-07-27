@@ -25,7 +25,7 @@ struct WorkEntryCard: View {
     // 新建标签 popover
     @State private var showNewTag = false
     @State private var newName = ""
-    @State private var newColorHex = "#4A90D9"
+    @State private var newColorHex = TagPickerPalette.defaultHex
     @State private var showDeleteConfirm = false
     @State private var writeError: String?
 
@@ -228,12 +228,13 @@ struct WorkEntryCard: View {
         let name = newName.trimmed
         guard !name.isEmpty else { return }
         guard let store else { return }
+        // R33-C：与 TagPicker.add 共用 getOrCreateTag，避免重名时被 v4 UNIQUE 索引拒绝 + 弹错
         let tag: TagRecord
-        do { tag = try store.insertTag(NewTag(name: name, colorHex: newColorHex)) }
+        do { tag = try store.getOrCreateTag(name: name, colorHex: newColorHex) }
         catch { writeError = error.localizedDescription; return }
         addTag(tag.id)
         newName = ""
-        newColorHex = "#4A90D9"
+        newColorHex = TagPickerPalette.defaultHex
         showNewTag = false
     }
 
@@ -362,33 +363,40 @@ struct WorkEntryCard: View {
         draftPriority = entry.priority
     }
 
+    /// @State 草稿 → record 写回。R33-F 抽出：commit 原本内联 18 行 mutations 与 syncDraft 字段集
+    /// 完全对称，新增字段（如「地点」）必须同时改两处。抽 helper 后只动 syncDraft + applyDraft 两端，
+    /// 不再扫整个 commit 寻找遗漏点
+    private func applyDraft(to rec: inout WorkEntryRecord) {
+        rec.title = draftTitle.trimmed
+        rec.detail = draftDetail
+        let helperTrimmed = draftHelper.trimmed
+        switch rec.kind {
+        case .done, .planned:
+            rec.finishDate = draftFinishDate
+        case .blocker:
+            rec.helper = helperTrimmed.isEmpty ? nil : helperTrimmed
+            rec.blockerStatus = draftBlockerStatus
+        }
+        if rec.kind == .planned {
+            rec.isRecurring = draftIsRecurring
+            rec.recurrenceUnit = draftRecurrenceUnit
+            rec.recurrenceInterval = draftRecurrenceInterval
+            rec.recurrenceWeekdays = draftRecurrenceWeekdays
+            rec.recurrenceMonthDays = draftRecurrenceMonthDays
+        } else {
+            rec.isRecurring = false
+        }
+        rec.priority = draftPriority
+    }
+
     private func commit() {
         let title = draftTitle.trimmed
         guard !title.isEmpty else { return }
-        let helperTrimmed = draftHelper.trimmed
         // 用返回值而非 writeError == nil 判断：上次写失败的 writeError 可能尚未清空，
         // 即使本次写成功，writeError != nil 也会让 editing 卡住
         let ok = write({
             try $0.updateEntry(entry.id, mutations: { rec in
-                rec.title = title
-                rec.detail = draftDetail
-                switch rec.kind {
-                case .done, .planned:
-                    rec.finishDate = draftFinishDate
-                case .blocker:
-                    rec.helper = helperTrimmed.isEmpty ? nil : helperTrimmed
-                    rec.blockerStatus = draftBlockerStatus
-                }
-                if rec.kind == .planned {
-                    rec.isRecurring = draftIsRecurring
-                    rec.recurrenceUnit = draftRecurrenceUnit
-                    rec.recurrenceInterval = draftRecurrenceInterval
-                    rec.recurrenceWeekdays = draftRecurrenceWeekdays
-                    rec.recurrenceMonthDays = draftRecurrenceMonthDays
-                } else {
-                    rec.isRecurring = false
-                }
-                rec.priority = draftPriority
+                applyDraft(to: &rec)
             }, newTagIds: draftTags.map(\.id))
         })
         // 写成功才退出 editing；失败时 write() 已弹 alert，editing 保留草稿供用户重试

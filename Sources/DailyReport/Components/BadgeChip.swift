@@ -7,21 +7,30 @@ import SwiftUI
 /// （4 处 tag）—— 每处都重复 `Text/Label + font + padding + background(color.opacity) +
 /// foregroundStyle(color) + clipShape(Capsule())` 6-7 行。
 ///
-/// 两种 size：
+/// 三种 size：
 /// - `.regular`：caption2，padding 5/1（卡片、详情）
 /// - `.compact`：system(size: 9)，padding 4/1（菜单栏面板、紧凑列表）
+/// - `.large`：caption，padding 6/1（看板列头，比子分组头略大表层级）
 struct BadgeChip: View {
     enum Size {
         case regular   // font(.caption2), padding 5/1
         case compact   // font(.system(size: 9)), padding 4/1
+        case large     // font(.caption), padding 6/1
 
         var font: Font {
             switch self {
             case .regular:  return .caption2
             case .compact:  return .system(size: 9)
+            case .large:    return .caption
             }
         }
-        var paddingH: CGFloat { self == .regular ? 5 : 4 }
+        var paddingH: CGFloat {
+            switch self {
+            case .regular:  return 5
+            case .compact:  return 4
+            case .large:    return 6
+            }
+        }
         var paddingV: CGFloat { 1 }
     }
 
@@ -81,5 +90,12 @@ extension BadgeChip {
     static func tag(_ tag: TagRecord, size: Size = .regular) -> BadgeChip {
         BadgeChip(text: tag.name, color: tag.swiftUIColor,
                   size: size, weight: .regular, bgOpacity: 0.2)
+    }
+
+    /// 纯数字计数徽章（看板列头 / 优先级分组头 / blocker 状态子分组头 共用）。
+    /// R33-E：原版 3 处各写一份 `Text("\(n)") + font + padding + background + clipShape(Capsule())`，
+    /// 改胶囊样式（如圆角改 5）必须同步 3 处。统一走 BadgeChip 后调一处即生效
+    static func count(_ n: Int, color: Color, size: Size = .regular) -> BadgeChip {
+        BadgeChip(text: "\(n)", color: color, size: size)
     }
 }

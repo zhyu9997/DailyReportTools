@@ -397,6 +397,21 @@ struct MeetingFormView: View {
             .map { ReviewDraft(reviewer: $0.reviewer, opinion: $0.opinion) }
     }
 
+    /// @State 草稿 → record 写回。R33-F 抽出：save 原本内联 8 行 mutations 与 syncDraft 字段集
+    /// 完全对称（topic/summary/timestamp + 4 个 recurrence 字段），新增字段必须同时改两处。
+    /// 抽 helper 后只动 syncDraft + applyDraft 两端，不再扫整个 save 寻找遗漏点。
+    /// 注意 topic 已在 save() 入口清洗为 trimmed，所以这里直接赋值。
+    private func applyDraft(to rec: inout MeetingRecord) {
+        rec.topic = topic.trimmed
+        rec.summary = summary
+        rec.timestamp = timestamp
+        rec.isRecurring = isRecurring
+        rec.recurrenceUnit = recurrenceUnit
+        rec.recurrenceInterval = recurrenceInterval
+        rec.recurrenceWeekdays = recurrenceWeekdays
+        rec.recurrenceMonthDays = recurrenceMonthDays
+    }
+
     private func save() {
         let t = topic.trimmed
         guard !t.isEmpty else { return }
@@ -415,14 +430,7 @@ struct MeetingFormView: View {
                 // 三步走独立事务（每步原子），任一失败后续不执行 + 抛错给用户
                 // 不再用 store?.run 吞 throws 假装成功
                 try store?.updateMeeting(m.id) { rec in
-                    rec.topic = t
-                    rec.summary = summary
-                    rec.timestamp = timestamp
-                    rec.isRecurring = isRecurring
-                    rec.recurrenceUnit = recurrenceUnit
-                    rec.recurrenceInterval = recurrenceInterval
-                    rec.recurrenceWeekdays = recurrenceWeekdays
-                    rec.recurrenceMonthDays = recurrenceMonthDays
+                    applyDraft(to: &rec)
                 }
                 try store?.setMeetingTags(m.id, tagIds: selectedTags.map(\.id))
                 try store?.setMeetingReviews(meetingId: m.id, with: cleaned)

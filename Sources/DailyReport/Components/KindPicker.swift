@@ -25,7 +25,7 @@ struct KindPicker: View {
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity)
                 .background(isSelected
-                            ? AnyShapeStyle(kind.swiftUIColor)
+                            ? AnyShapeStyle(kind.color())
                             : AnyShapeStyle(Color.secondary.opacity(0.12)))
                 .foregroundStyle(isSelected ? Color.white : Color.primary)
                 .clipShape(Capsule())

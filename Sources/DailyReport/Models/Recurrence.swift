@@ -47,7 +47,9 @@ enum Recurrence {
             let stepDays = 7 * n
             // 锚点用 base 而非 now：interval>1 时需要固定的窗口起点（每 n 周一个）
             let anchor = cal.startOfDay(for: base)
-            let cap = max(now, base).addingTimeInterval(366 * .day)
+            // R33-D：原版裸 366 魔数（覆盖闰年安全一年），与 .year=365 区别微妙易混淆。
+            // 改为 `.year + .day` 表达「1 年 + 1 天（闰年兜底）」语义
+            let cap = max(now, base).addingTimeInterval(.year + .day)
             // O(1) 跳到当前窗口起点；base 在未来则从 anchor 起算
             var windowStart: Date
             if base >= now {
@@ -91,7 +93,9 @@ enum Recurrence {
             // O(1) 跳到当前或前一个允许的月份
             let jumps = max(0, monthDiff) / n
             var monthCursor = cal.date(byAdding: .month, value: jumps * n, to: anchorMonthStart) ?? anchorMonthStart
-            let cap = max(now, base).addingTimeInterval(366 * .day)
+            // R33-D：原版裸 366 魔数（覆盖闰年安全一年），与 .year=365 区别微妙易混淆。
+            // 改为 `.year + .day` 表达「1 年 + 1 天（闰年兜底）」语义
+            let cap = max(now, base).addingTimeInterval(.year + .day)
             var iterations = 0
             while monthCursor <= cap && iterations < 60 {
                 let mc = cal.dateComponents([.year, .month], from: monthCursor)

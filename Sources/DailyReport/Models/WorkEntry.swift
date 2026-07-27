@@ -26,15 +26,10 @@ enum WorkKind: String, Codable, CaseIterable, Identifiable {
         case .blocker:  "exclamationmark.triangle.fill"
         }
     }
-    var swiftUIColor: Color {
-        switch self {
-        case .done:     .green
-        case .planned:  .blue
-        case .blocker:  .orange
-        }
-    }
-    /// R23-K：blocker 类用 status 决定颜色（resolved 时变绿等），其它类用 base color。
-    /// 替代 HistoryView / MenuPanelView / WorkSummaryView 三处重复 switch
+    /// 任务分类的颜色。R23-K：blocker 类用 status 决定颜色（resolved 时变绿等），其它类用 base color。
+    /// R33-B：原版 `swiftUIColor` 与 `color(status:)` 90% 重合且 blocker 分支语义不一致
+    /// （swiftUIColor 永远橙、color(status:) 按 status 变色），合并到一处避免未来新增 case 时漏改。
+    /// 不传 status 时默认 .ongoing（等价于原 swiftUIColor 行为）
     func color(status: BlockerStatus = .ongoing) -> Color {
         switch self {
         case .done:    return .green

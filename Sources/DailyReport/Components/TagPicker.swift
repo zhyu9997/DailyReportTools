@@ -8,6 +8,9 @@ enum TagPickerPalette {
         "#4A90D9", "#7BBD5B", "#E8743B", "#D34A4A",
         "#9B59B6", "#F2C037", "#1AB5A4", "#555555"
     ]
+    /// 新建 tag 表单的默认色。R33-C 抽出：原版 "#4A90D9" 字面量在 WorkEntryCard / TagPicker 等 5 处重复，
+    /// 改默认色必须手动同步。集中后调一处即生效；fallback 与 R30-A nextDefaultColor 同款防御
+    static let defaultHex = defaultPalette.first ?? "#4A90D9"
 }
 
 struct TagPicker: View {
@@ -19,7 +22,7 @@ struct TagPicker: View {
     @State private var showNewForm = false
     @State private var showCompactPopover = false
     @State private var newName = ""
-    @State private var newColorHex = "#4A90D9"
+    @State private var newColorHex = TagPickerPalette.defaultHex
     @FocusState private var nameFocused: Bool
     @State private var pendingDeleteTag: TagRecord?
     /// 写失败反馈：删标签是破坏性操作，store?.run 吞 throws 后 UI 会假成功 + selected 被错误地同步移除
@@ -226,7 +229,7 @@ struct TagPicker: View {
     private func nextDefaultColor() -> String {
         let palette = TagPickerPalette.defaultPalette
         // R30-A：防御未来若把 defaultPalette 改成空数组（编译期不阻止）导致 modulo by zero crash
-        guard !palette.isEmpty else { return "#4A90D9" }
+        guard !palette.isEmpty else { return TagPickerPalette.defaultHex }
         let used = Set(allTags.map { $0.colorHex })
         for c in palette where !used.contains(c) {
             return c
@@ -262,18 +265,12 @@ struct TagPicker: View {
         guard let store else { return }
         let name = newName.trimmed
         guard !name.isEmpty else { return }
-        // 重名查重（case-insensitive）：命中则复用已存在 tag 而不是新建
-        if let existing = allTags.first(where: { $0.name.lowercased() == name.lowercased() }) {
-            if !selected.contains(where: { $0.id == existing.id }) {
-                selected.append(existing)
-            }
-            newName = ""
-            nameFocused = true
-            return
-        }
+        // R33-C：重名查重 + insert 合并到 AppStore.getOrCreateTag，与 WorkEntryCard.addNewTag 共享一份实现
         do {
-            let tag = try store.insertTag(NewTag(name: name, colorHex: newColorHex))
-            selected.append(tag)
+            let tag = try store.getOrCreateTag(name: name, colorHex: newColorHex)
+            if !selected.contains(where: { $0.id == tag.id }) {
+                selected.append(tag)
+            }
             newName = ""
             newColorHex = nextDefaultColor()
             nameFocused = true
