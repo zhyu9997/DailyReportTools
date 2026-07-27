@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，550 tests / 60 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，574 tests / 64 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，550 tests / 60 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，574 tests / 64 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1091,6 +1091,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `TodosCSVBodyTests` | 6 | ExportService.todosCSVBody 全 Todo→CSV 文本：空输入仅返回表头一行 / 表头 6 列固定顺序（标题/是否完成/截止日期/创建时间/完成时间/标签）/ 单 todo 追加一行 / 多 todo 按传入顺序拼接不重排 / tagsByTodo 映射的 tag 数组用「/」拼接 / todo 在映射缺失时最后一列显空串兜底（非 "nil" 字面量）（R48-B，原内联在 exportTodosCSV 的表头 + 循环拼行绑死 NSSavePanel 零覆盖，抽 `static func todosCSVBody(_:tagsByTodo:) -> String`） |
 | `CleanReviewDraftsTests` | 7 | MeetingFormView.cleanReviewDrafts 评审草稿清洗：空输入返空 / 全部 reviewer+opinion 双空（含纯空格）全过滤 / 仅 reviewer 有效保留 / 仅 opinion 有效保留 / 两字段都 trim 防脏数据 / filter 后 enumerated 重排 order 顺序 0,1,2...（防跳号）（R48-C，原内联在 save() 的 5 步链式 map→filter→enumerated→map 零覆盖，抽 `static func cleanReviewDrafts(_:) -> [NewReview]`；与 MeetingCard.validReviews 必须语义对称，否则表单保存数与卡片显示数分叉） |
 | `MeetingBelongsToColumnTests` | 7 | HistoryView.meetingBelongsToColumn 会议→看板列归属：周期性会议永不进看板（仅作模板）/ 未来会议属 planned 列 / 未来会议不属于 done 列 / 过去会议属 done 列 / 过去会议不属于 planned 列 / blocker 列永不收会议（不管未来过去）/ 边界 timestamp==now 走 done（`m.timestamp > now` false，已开始）（R48-D，原内联在 columnItems 的 compactMap 闭包 4 行 if 链零覆盖，抽 `static func meetingBelongsToColumn(_:kind:now:) -> Bool`） |
+| `SortDoneColumnTests` | 5 | HistoryView.sortDoneColumn done/problem 列排序：空数组返空 / 单元素 / sortDate 降序乱序传入验证（晚→中→早）/ finishDate 优先 timestamp 兜底 / 任务+会议混排按 sortDate 降序（R49-A，与 R44-D sortPlannedColumn 对称的 else 分支零覆盖，抽 `static func sortDoneColumn(_:) -> [BoardItem]`） |
+| `ClearedSiblingArraysTests` | 6 | RecurrenceEditor.clearedSiblingArrays 切单位清对侧数组：daily 清两数组 / weekly 清 monthDays 留 weekdays / monthly 清 weekdays 留 monthDays / 已空数组幂等（4 单位参数化）/ weekdays 顺序保留（防 sort 漏）/ monthDays 顺序保留（R49-B，原内联在 `onChange(of: unit)` switch 零覆盖，抽 `static func clearedSiblingArrays(unit:weekdays:monthDays:) -> (weekdays:, monthDays:)`） |
+| `ToggledIntTests` | 6 | RecurrenceEditor.toggledInt [Int] 数组 toggle：空追加 / 末尾追加非空数组 / 已存在值移除 / 防御重复值全移除（filter 非 removeAll first）/ 多值数组只移除目标 / 双次 toggle 还原原数组（R49-C，weekdayChip + monthDayButton 两份重复的 contains+removeAll+append 链零覆盖，抽 `static func toggledInt(_:value:) -> [Int]`） |
+| `FilterMeetingsForColumnTests` | 7 | HistoryView.filterMeetingsForColumn 会议三重过滤：无过滤全放行非周期 / filterTag 命中纳入 / filterTag 全无则返空 / searchKey 标题大小写不敏感 / searchKey 概要命中 / tag+search 合取语义（both vs onlyTag vs onlySearch）/ done 列只收过去会议（R49-D，原内联在 columnItems compactMap 闭包零覆盖，抽 `static func filterMeetingsForColumn(_:kind:now:filterTag:tagsByMeeting:searchKey:) -> [BoardItem]`） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1174,6 +1178,11 @@ R48-A 新建 `WeekMarkdownTests` 5 用例（ExportService.weekMarkdown 周报 Ma
 R48-B 新建 `TodosCSVBodyTests` 6 用例（ExportService.todosCSVBody 全 Todo→CSV 文本），TodosCSVBodyTests 用例数 0 → 6。原内联在 `exportTodosCSV` 的表头 + 循环拼行绑死 NSSavePanel 零覆盖，抽 `static func todosCSVBody(_ todos:, tagsByTodo:) -> String`。覆盖空输入仅表头 / 表头 6 列顺序契约 / 单行追加 / 多行顺序 / tags「/」拼接 / 缺失映射空串兜底。改坏会让 Excel 打开 CSV 列错位或显示 "nil" 字面量。
 R48-C 新建 `CleanReviewDraftsTests` 7 用例（MeetingFormView.cleanReviewDrafts 评审草稿清洗），CleanReviewDraftsTests 用例数 0 → 7。原内联在 `save()` 的 5 步链式 map→filter→enumerated→map 零覆盖，抽 `static func cleanReviewDrafts(_ drafts:) -> [NewReview]`。覆盖空输入 / 全空过滤 / 仅 reviewer 保留 / 仅 opinion 保留 / 两字段 trim / filter 后 order 重排。改坏会让空评审被持久化或 order 跳号错乱（与 MeetingCard.validReviews 必须语义对称）。
 R48-D 新建 `MeetingBelongsToColumnTests` 7 用例（HistoryView.meetingBelongsToColumn 会议→看板列归属），MeetingBelongsToColumnTests 用例数 0 → 7。原内联在 `columnItems` 的 compactMap 闭包 4 行 if 链零覆盖，抽 `static func meetingBelongsToColumn(_ m:, kind:, now:) -> Bool`。覆盖周期性 false / 未来→planned / 未来不属于 done / 过去→done / 过去不属于 planned / blocker 列永不收 / timestamp==now 边界。改坏会让已结束会议赖在「计划」列挡视线或未来会议污染「完成」列。
+
+R49-A 新建 `SortDoneColumnTests` 5 用例（HistoryView.sortDoneColumn done/problem 列排序），SortDoneColumnTests 用例数 0 → 5。原内联在 `columnItems` else 分支的 `items.sorted { $0.sortDate > $1.sortDate }` 零覆盖，抽 `static func sortDoneColumn(_:) -> [BoardItem]`。与 R44-D sortPlannedColumn 对称缺口——之前只测了 planned 列复合排序，done/problem 列共用此降序分支（看板默认按时间倒序展示，最新优先看见）。改坏会让最新完成的任务沉底或问题列顺序错乱。
+R49-B 新建 `ClearedSiblingArraysTests` 6 用例（RecurrenceEditor.clearedSiblingArrays 切单位清对侧数组），ClearedSiblingArraysTests 用例数 0 → 6。原内联在 `onChange(of: unit)` 的 switch 零覆盖，抽 `static func clearedSiblingArrays(unit:weekdays:monthDays:) -> (weekdays:, monthDays:)`。覆盖 daily 清两数组 / weekly 清 monthDays 留 weekdays / monthly 反之 / 已空幂等（4 单位参数化）/ 两侧顺序保留。改坏会让脏数据写库（备份/解码持久化所有字段，下次切回该单位看到陈旧选择）。
+R49-C 新建 `ToggledIntTests` 6 用例（RecurrenceEditor.toggledInt [Int] 数组 toggle），ToggledIntTests 用例数 0 → 6。weekdayChip + monthDayButton 两份重复的 contains+removeAll+append 链零覆盖，抽 `static func toggledInt(_:value:) -> [Int]` 共用。覆盖空追加 / 非空末尾追加 / 已存在移除 / 防御重复值全移除（filter 非 removeAll first）/ 多值数组只移除目标 / 双次 toggle 还原。改坏会让用户点「周一」不响应（contains 写错）或同一值被重复添加，直接污染 recurrence 配置 → 周期性任务/会议的下次触发时间算错。
+R49-D 新建 `FilterMeetingsForColumnTests` 7 用例（HistoryView.filterMeetingsForColumn 会议三重过滤），FilterMeetingsForColumnTests 用例数 0 → 7。原内联在 `columnItems` compactMap 闭包零覆盖，抽 `static func filterMeetingsForColumn(_:kind:now:filterTag:tagsByMeeting:searchKey:) -> [BoardItem]`。覆盖无过滤全放行（非周期）/ filterTag 命中纳入 / filterTag 全无则返空 / 标题大小写不敏感命中 / 概要命中 / tag+search 合取语义（必须同时满足，不是析取）/ done 列只收过去会议。改坏会让看板涌入无关会议（合取误写成析取）或全部消失。
 
 ### 14.2 测试模式约定
 

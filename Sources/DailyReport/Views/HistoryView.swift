@@ -96,20 +96,37 @@ struct HistoryView: View {
         // 会议只在 完成 / 计划 两列出现；启用标签筛选时按标签过滤
         if kind == .done || kind == .planned {
             let now = nowTick   // 由 body 里的 Timer.publish 驱动；避免瞬时 Date() 让看板长时间挂着不刷新
-            let meetingItems: [BoardItem] = allMeetings.compactMap { m -> BoardItem? in
-                if let tag = filterTag, !(store?.tagsByMeeting[m.id] ?? []).contains(where: { $0.id == tag.id }) {
-                    return nil
-                }
-                if !matchesSearch(m) { return nil }
-                return Self.meetingBelongsToColumn(m, kind: kind, now: now) ? .meeting(m) : nil
-            }
+            let meetingItems = Self.filterMeetingsForColumn(
+                allMeetings, kind: kind, now: now,
+                filterTag: filterTag,
+                tagsByMeeting: store?.tagsByMeeting ?? [:],
+                searchKey: searchKey
+            )
             items.append(contentsOf: meetingItems)
         }
         // 计划列：优先级（高→低）→ 计划时间（先→后）
         if kind == .planned {
             return Self.sortPlannedColumn(items)
         } else {
-            return items.sorted { $0.sortDate > $1.sortDate }
+            return Self.sortDoneColumn(items)
+        }
+    }
+
+    /// 会议三重过滤的纯函数核心：标签命中 + 搜索命中 + 列归属（合取，任一不满足则丢弃）。
+    /// R49-D：从 columnItems 的 compactMap 闭包抽 static 让单测可钉死合取语义。
+    /// 改坏会让看板涌入大量无关会议（|| 误写成 &&）或全部消失（合取误写成析取）
+    static func filterMeetingsForColumn(_ meetings: [MeetingRecord],
+                                         kind: WorkKind,
+                                         now: Date,
+                                         filterTag: TagRecord?,
+                                         tagsByMeeting: [UUID: [TagRecord]],
+                                         searchKey: String) -> [BoardItem] {
+        meetings.compactMap { m -> BoardItem? in
+            if let tag = filterTag, !(tagsByMeeting[m.id] ?? []).contains(where: { $0.id == tag.id }) {
+                return nil
+            }
+            if !matchesSearch(title: m.topic, detail: m.summary, key: searchKey) { return nil }
+            return meetingBelongsToColumn(m, kind: kind, now: now) ? .meeting(m) : nil
         }
     }
 
@@ -123,6 +140,13 @@ struct HistoryView: View {
             if lp.sortOrder != rp.sortOrder { return lp.sortOrder < rp.sortOrder }
             return lhs.sortDate < rhs.sortDate
         }
+    }
+
+    /// 完成 / 问题列排序：按 sortDate 降序（最新在最上方）。
+    /// R49-A：与 sortPlannedColumn 对称抽出。改坏会让最新完成的任务沉底，
+    /// 或问题列顺序错乱（看板默认按时间倒序展示，最新优先看见）
+    static func sortDoneColumn(_ items: [BoardItem]) -> [BoardItem] {
+        items.sorted { $0.sortDate > $1.sortDate }
     }
 
     /// 看板项的优先级派生：任务取自身 priority，会议项无优先级概念固定 medium（与 planned 列默认对齐）。

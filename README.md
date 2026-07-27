@@ -50,7 +50,7 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**550 tests / 60 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**574 tests / 64 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
@@ -97,6 +97,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `TodosCSVBodyTests` (6) | ExportService.todosCSVBody 全 Todo→CSV 文本：空输入仅表头 / 表头 6 列顺序 / 单行追加 / 多行顺序 / tags 用「/」拼接 / 缺失映射空串兜底（R48-B，原内联在 exportTodosCSV 零覆盖） |
 | `CleanReviewDraftsTests` (7) | MeetingFormView.cleanReviewDrafts 评审草稿清洗：空输入 / 全空过滤 / 仅 reviewer 保留 / 仅 opinion 保留 / trim 两字段 / filter 后 order 顺序重排（防跳号）（R48-C，原内联在 save() 5 步链零覆盖） |
 | `MeetingBelongsToColumnTests` (7) | HistoryView.meetingBelongsToColumn 会议→看板列归属：周期性 false / 未来→planned / 过去→done / 跨列互斥 / blocker 列永不收 / timestamp==now 走 done（R48-D，原内联在 columnItems compactMap 零覆盖） |
+| `SortDoneColumnTests` (5) | HistoryView.sortDoneColumn done/problem 列降序排序：空数组 / 单元素 / sortDate 降序乱序验证 / finishDate 优先 timestamp 兜底 / 任务+会议混排（R49-A，与 R44-D sortPlannedColumn 对称缺口） |
+| `ClearedSiblingArraysTests` (6) | RecurrenceEditor.clearedSiblingArrays 切单位清对侧数组：daily 清两 / weekly 清 monthDays / monthly 清 weekdays / 已空幂等 / weekdays 顺序保留 / monthDays 顺序保留（R49-B，原内联 onChange switch 零覆盖） |
+| `ToggledIntTests` (6) | RecurrenceEditor.toggledInt [Int] toggle：空追加 / 末尾追加非空 / 已存在移除 / 重复值全移除 / 多值只移除目标 / 双次 toggle 还原（R49-C，weekdayChip/monthDayButton 两份重复逻辑零覆盖） |
+| `FilterMeetingsForColumnTests` (7) | HistoryView.filterMeetingsForColumn 会议三重过滤：无过滤全放行（非周期）/ 标签命中 / 标签不命中全滤 / 标题大小写不敏感 / 概要命中 / tag+search 合取语义 / done 列只收过去（R49-D，原内联在 columnItems compactMap 零覆盖） |
 
 View 层不测（SwiftUI 视图组合靠人工验证）。
 
@@ -137,7 +141,7 @@ Sources/DailyReport/
 ├── Views/                  # 概要 / 时间线 / 会议 / 周报 / 设置 / 菜单栏面板
 ├── Components/             # 复用组件（InlineSummaryEditor、TagPicker、KindPicker、RecurrenceEditor、WriteErrorAlert…）
 └── Services/               # 备份 / 导出 / 周期推进 / 提醒 / 日志
-Tests/DailyReportTests/      # 550 tests / 60 suites（详见 DESIGN.md §14）
+Tests/DailyReportTests/      # 574 tests / 64 suites（详见 DESIGN.md §14）
 scripts/build-app.sh         # 构建 + 打包（纯 CLT）
 Resources/Info.plist.template
 ```

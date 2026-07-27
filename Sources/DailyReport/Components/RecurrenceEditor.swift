@@ -11,6 +11,19 @@ struct RecurrenceEditor: View {
     @Binding var weekdays: [Int]
     @Binding var monthDays: [Int]
 
+    /// 切单位时清掉对侧数组的纯函数核心：daily 清两数组 / weekly 清 monthDays / monthly 清 weekdays。
+    /// R49-B：从 onChange(of: unit) 抽 static 让单测可覆盖 3 分支 + 已空数组幂等。
+    /// 改坏会让脏数据写库（备份/解码持久化所有字段，下次切回该单位看到陈旧选择）
+    static func clearedSiblingArrays(unit: RecurrenceUnit,
+                                      weekdays: [Int],
+                                      monthDays: [Int]) -> (weekdays: [Int], monthDays: [Int]) {
+        switch unit {
+        case .daily:   return (weekdays: [], monthDays: [])
+        case .weekly:  return (weekdays: weekdays, monthDays: [])
+        case .monthly: return (weekdays: [], monthDays: monthDays)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: $isOn) {
@@ -34,11 +47,11 @@ struct RecurrenceEditor: View {
                 .onChange(of: unit) { _, newUnit in
                     // 切单位时清掉对侧数组，避免脏数据写库
                     // （Recurrence.nextFutureDate 只读当前单位对应的数组，但备份/解码会持久化所有字段）
-                    switch newUnit {
-                    case .daily:   weekdays = []; monthDays = []
-                    case .weekly:  monthDays = []
-                    case .monthly: weekdays = []
-                    }
+                    let cleaned = Self.clearedSiblingArrays(unit: newUnit,
+                                                             weekdays: weekdays,
+                                                             monthDays: monthDays)
+                    weekdays = cleaned.weekdays
+                    monthDays = cleaned.monthDays
                 }
                 options
             }
@@ -77,11 +90,7 @@ struct RecurrenceEditor: View {
             isSelected: weekdays.contains(weekday),
             width: 24
         ) {
-            if weekdays.contains(weekday) {
-                weekdays.removeAll { $0 == weekday }
-            } else {
-                weekdays.append(weekday)
-            }
+            weekdays = Self.toggledInt(weekdays, value: weekday)
         }
     }
 
@@ -91,12 +100,19 @@ struct RecurrenceEditor: View {
             isSelected: monthDays.contains(day),
             width: 28
         ) {
-            if monthDays.contains(day) {
-                monthDays.removeAll { $0 == day }
-            } else {
-                monthDays.append(day)
-            }
+            monthDays = Self.toggledInt(monthDays, value: day)
         }
+    }
+
+    /// [Int] 数组 toggle 的纯函数核心：存在则移除，不存在则追加。
+    /// R49-C：weekdayChip 与 monthDayButton 两份重复的 contains/removeAll/append 链零覆盖，
+    /// 抽 static 让单测可钉死切换契约。改坏会让用户点「周一」不响应或同一值被重复添加，
+    /// 直接污染 recurrence 配置 → 周期性任务/会议的下次触发时间算错
+    static func toggledInt(_ values: [Int], value: Int) -> [Int] {
+        if values.contains(value) {
+            return values.filter { $0 != value }
+        }
+        return values + [value]
     }
 
     /// R31-C：weekdayChip 与 monthDayButton 原本逐行复制（视觉规格几乎相同，仅 title / width / 数组不同）。
