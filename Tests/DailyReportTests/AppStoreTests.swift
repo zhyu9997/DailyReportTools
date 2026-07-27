@@ -466,6 +466,53 @@ import GRDB
         #expect(store.reviews.isEmpty)
     }
 
+    // MARK: - addReview order 默认值（R23-A：事务内查 MAX+1，不依赖内存快照）
+
+    @Test func addReviewAssignsMonotonicOrderByDefault() async throws {
+        let store = try Self.makeStore()
+        let meeting = try store.insertMeeting(NewMeeting(
+            topic: "M", summary: "", timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            tagIds: [], reviews: []
+        ))
+        // 连续 3 次 addReview 不传 order：默认应从 db MAX(order)+1 计算
+        _ = try store.addReview(to: meeting.id, reviewer: "A")
+        _ = try store.addReview(to: meeting.id, reviewer: "B")
+        _ = try store.addReview(to: meeting.id, reviewer: "C")
+        let orders = store.reviewsByMeeting[meeting.id]?.map(\.order).sorted() ?? []
+        #expect(orders == [0, 1, 2])
+    }
+
+    @Test func addReviewExplicitOrderOverridesDefault() async throws {
+        let store = try Self.makeStore()
+        let meeting = try store.insertMeeting(NewMeeting(
+            topic: "M", summary: "", timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            tagIds: [], reviews: []
+        ))
+        // 显式传 order=5 时不应被覆盖
+        let r = try store.addReview(to: meeting.id, reviewer: "X", order: 5)
+        #expect(r.order == 5)
+    }
+
+    @Test func addReviewAfterMiddleRemovedPicksMaxRemainingPlusOne() async throws {
+        let store = try Self.makeStore()
+        let meeting = try store.insertMeeting(NewMeeting(
+            topic: "M", summary: "", timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            tagIds: [], reviews: []
+        ))
+        // 用显式 order 制造非连续序列：0 和 5（中间有空洞）
+        _ = try store.addReview(to: meeting.id, reviewer: "A")           // order=0（MAX=nil → 0）
+        _ = try store.addReview(to: meeting.id, reviewer: "B", order: 5) // order=5（显式）
+        // 新 addReview 应取 MAX(0,5)+1=6，而非 count=2 → 2（会与未来的 review 碰撞）
+        let rNew = try store.addReview(to: meeting.id, reviewer: "C")
+        #expect(rNew.order == 6)
+    }
+
     // MARK: - markEntryDone 多窗口 race 防御
 
     @Test func markEntryDoneRaceAlreadyDoneIsNoOp() async throws {

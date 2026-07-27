@@ -44,10 +44,10 @@ final class AppStore {
 
                 // 4 张中间表共用一份 allTagsById 字典，避免 fetchTagMap 内部 4 次全表 Tag 扫描
                 let allTagsById = Dictionary(tags.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-                tagsByReport  = try RecordQueries.fetchTagMap(db, linkTable: "tag_daily_report", ownerColumn: "reportId", allTagsById: allTagsById)
-                tagsByTodo    = try RecordQueries.fetchTagMap(db, linkTable: "tag_todo",          ownerColumn: "todoId",        allTagsById: allTagsById)
-                tagsByEntry   = try RecordQueries.fetchTagMap(db, linkTable: "tag_work_entry",    ownerColumn: "entryId",       allTagsById: allTagsById)
-                tagsByMeeting = try RecordQueries.fetchTagMap(db, linkTable: "tag_meeting",       ownerColumn: "meetingId",     allTagsById: allTagsById)
+                tagsByReport  = try RecordQueries.fetchTagMap(db, link: .dailyReport, allTagsById: allTagsById)
+                tagsByTodo    = try RecordQueries.fetchTagMap(db, link: .todo,        allTagsById: allTagsById)
+                tagsByEntry   = try RecordQueries.fetchTagMap(db, link: .workEntry,   allTagsById: allTagsById)
+                tagsByMeeting = try RecordQueries.fetchTagMap(db, link: .meeting,     allTagsById: allTagsById)
                 reviewsByMeeting = try RecordQueries.fetchReviewsByMeeting(db)
             }
         } catch {
@@ -417,11 +417,22 @@ final class AppStore {
             id: UUID(),
             reviewer: reviewer,
             opinion: opinion,
-            order: order ?? (reviewsByMeeting[meetingId]?.count ?? 0),
+            // 占位 order，事务内根据 db 实际状态覆盖（避免依赖内存快照 stale）
+            order: order ?? 0,
             createdAt: Date(),
             meetingId: meetingId
         )
         try writeOrThrow { db in
+            // R23-A：原版用 reviewsByMeeting[meetingId]?.count（内存快照）作默认 order，
+            // 多窗口并发时两个调用者都读到 count=N 都插入 order=N。改为事务内查 MAX+1，
+            // 配合 v5 UNIQUE(meetingId, order) 索引兜底
+            if order == nil {
+                // MAX(order) 在空集上返回 NULL → fetchOne 给 nil → 落到 -1 → +1 = 0
+                let maxOrder = try Int.fetchOne(db,
+                    sql: "SELECT MAX(\"order\") FROM review WHERE meetingId = ?",
+                    arguments: [meetingId.uuidString])
+                rec.order = (maxOrder ?? -1) + 1
+            }
             try rec.insert(db)
         }
         return rec

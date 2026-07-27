@@ -37,3 +37,27 @@ extension View {
         modifier(WriteErrorAlertModifier(message: message))
     }
 }
+
+// MARK: - 共享写入口
+
+/// 统一的写操作执行器：成功返回 true，失败把错误塞到 error 并返回 false。
+///
+/// R23-D 抽出：原版 6 处 view（TodayView/MeetingView/HistoryView/MenuPanelView/WorkSummaryView/TagPicker）
+/// 各写一份 `guard let store else { return false }; do { try block(store); return true } catch { writeError = ... }`。
+/// 改一处（如加 log）必然漏改其他。抽到共享函数后，调用方变成一行：
+/// ```swift
+/// private func write(_ block: (AppStore) throws -> Void) -> Bool {
+///     performWrite(in: store, error: &writeError, block)
+/// }
+/// ```
+@discardableResult
+func performWrite(in store: AppStore?,
+                  error: inout String?,
+                  _ block: (AppStore) throws -> Void) -> Bool {
+    guard let store else { return false }
+    do { try block(store); return true }
+    catch let caught {
+        error = caught.localizedDescription
+        return false
+    }
+}

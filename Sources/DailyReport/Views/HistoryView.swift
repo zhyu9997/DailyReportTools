@@ -173,7 +173,7 @@ struct HistoryView: View {
     }
 
     private func column(_ kind: WorkKind) -> some View {
-        let color = kindColor(kind)
+        let color = kind.color()
         let items = columnItems(kind)
         let isTarget = dropTarget == kind
         return VStack(spacing: 8) {
@@ -275,14 +275,10 @@ struct HistoryView: View {
 
     /// dropDestination 的统一写入口：成功返回 true（SwiftUI 播放成功动画），
     /// 失败返回 false + 写入 writeError 弹 alert 反馈（避免 store?.run 吞 throws 导致拖放「假成功」）
+    /// R23-D：主体逻辑抽到共享 `performWrite`
     @discardableResult
     private func writeForDrop(_ block: (AppStore) throws -> Void) -> Bool {
-        guard let store else { return false }
-        do { try block(store); return true }
-        catch {
-            writeError = error.localizedDescription
-            return false
-        }
+        performWrite(in: store, error: &writeError, block)
     }
 
     /// 计划列：按优先级分组渲染，组头可折叠，整组可作拖放目标
@@ -608,9 +604,5 @@ struct HistoryView: View {
         // 写成功后才 reset 草稿，失败时保留用户输入便于重试
         let inserted = writeForDrop { try _ = $0.insertEntry(entry) }
         if inserted { draft.reset() }
-    }
-
-    private func kindColor(_ k: WorkKind) -> Color {
-        switch k { case .done: .green; case .planned: .blue; case .blocker: .orange }
     }
 }

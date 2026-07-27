@@ -40,6 +40,15 @@ enum WorkKind: String, Codable, CaseIterable, Identifiable {
         case .blocker:  .orange
         }
     }
+    /// R23-K：blocker 类用 status 决定颜色（resolved 时变绿等），其它类用 base color。
+    /// 替代 HistoryView / MenuPanelView / WorkSummaryView 三处重复 switch
+    func color(status: BlockerStatus = .ongoing) -> Color {
+        switch self {
+        case .done:    return .green
+        case .planned: return .blue
+        case .blocker: return status.swiftUIColor
+        }
+    }
     /// Markdown 导出用的 emoji 占位（R21-C：原版 ExportService 用 SF Symbol 名做 switch 映射，
     /// 双层魔数 + default fallthrough 会让未来新增 WorkKind 直接输出 SF Symbol 字符串到 md；
     /// 移到 enum 内部让编译器强制覆盖所有 case）

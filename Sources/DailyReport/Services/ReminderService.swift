@@ -18,6 +18,8 @@ final class ReminderService {
             return try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound])
         } catch {
+            // R23-G：授权失败可能是系统策略、沙盒限制或 entitlement 问题，记 warn 便于排查
+            AppLogger.warn("通知授权失败：\(error)")
             return false
         }
     }

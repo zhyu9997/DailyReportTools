@@ -10,7 +10,9 @@ enum AppDatabase {
         let fm = FileManager.default
         let appDir = Bundle.main.bundleURL.deletingLastPathComponent()
         let dir = appDir.appendingPathComponent("db", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        // R23-G：app support 目录创建失败意味着所有后续读写都会失败，需记录原因
+        do { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+        catch { AppLogger.error("创建 db 根目录失败（\(dir.path)）：\(error)") }
         return dir
     }()
 
@@ -111,7 +113,9 @@ enum AppDatabase {
         let stamp = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let archiveParent = storeURL.deletingLastPathComponent()
             .appendingPathComponent("corrupted", isDirectory: true)
-        try? fm.createDirectory(at: archiveParent, withIntermediateDirectories: true)
+        // R23-G：归档目录创建失败会丢失现场；记 error 但仍继续（最坏情况只是没有归档目录）
+        do { try fm.createDirectory(at: archiveParent, withIntermediateDirectories: true) }
+        catch { AppLogger.error("创建 corrupted 归档根目录失败：\(error)") }
 
         // 找一个不冲突的目录名（同秒多次容错时附加 -2、-3 ...）
         var archiveDir = archiveParent.appendingPathComponent(stamp, isDirectory: true)
@@ -120,7 +124,8 @@ enum AppDatabase {
             archiveDir = archiveParent.appendingPathComponent("\(stamp)-\(seq)", isDirectory: true)
             seq += 1
         }
-        try? fm.createDirectory(at: archiveDir, withIntermediateDirectories: true)
+        do { try fm.createDirectory(at: archiveDir, withIntermediateDirectories: true) }
+        catch { AppLogger.error("创建 corrupted 归档目录失败（\(archiveDir.path)）：\(error)") }
 
         var archivedURL: URL?
         for suffix in ["", "-wal", "-shm"] {
@@ -128,8 +133,18 @@ enum AppDatabase {
             guard fm.fileExists(atPath: src.path) else { continue }
             let dst = archiveDir.appendingPathComponent(storeURL.lastPathComponent + suffix)
             if fm.fileExists(atPath: dst.path) { continue }
-            try? fm.moveItem(at: src, to: dst)
-            if suffix.isEmpty { archivedURL = dst }
+            do {
+                try fm.moveItem(at: src, to: dst)
+            } catch {
+                // R23-B：moveItem 失败时不能继续把 archivedURL 设为 dst（否则 snapshotToBackup
+                // 会在错误位置打开不存在的文件）。继续尝试 -wal/-shm 也无意义，主文件没归档成功
+                AppLogger.error("归档 db 失败（src=\(src.path)）：\(error)")
+                continue
+            }
+            // R23-B：只有主文件确实落到 dst 才设置 archivedURL（防止 stale 指向不存在位置）
+            if suffix.isEmpty, fm.fileExists(atPath: dst.path) {
+                archivedURL = dst
+            }
         }
 
         let note = """
@@ -141,8 +156,10 @@ enum AppDatabase {
         这里的文件是启动时被认为无法直接打开的 GRDB 数据库，已整体归档保留现场。
         如需手动恢复：用 sqlite3 命令行查看；如能读出数据可手动导入新库。
         """
-        try? note.write(to: archiveDir.appendingPathComponent("README.txt"),
-                        atomically: true, encoding: .utf8)
+        // R23-G：README 写失败不致命（归档目录已建立，主文件已 move 进去），但记 warn 便于排查
+        do { try note.write(to: archiveDir.appendingPathComponent("README.txt"),
+                            atomically: true, encoding: .utf8) }
+        catch { AppLogger.warn("写 corrupted/README.txt 失败：\(error)") }
         AppLogger.info("已归档损坏 GRDB db 到：\(archiveDir.path)")
         return archivedURL
     }
@@ -153,20 +170,23 @@ enum AppDatabase {
     static func snapshotToBackup(dbURL: URL) {
         var config = Configuration()
         config.readonly = true
-        guard let queue = try? DatabaseQueue(path: dbURL.path, configuration: config) else {
-            AppLogger.info("snapshotToBackup：归档 db 无法打开，跳过 JSON 抢救")
-            return
-        }
-        MainActor.assumeIsolated {
-            BackupService.snapshotFromDBQueueIfPossible(queue)
+        // R23-G：捕获具体错误（数据库文件结构损坏 vs 磁盘 IO）便于诊断
+        do {
+            let queue = try DatabaseQueue(path: dbURL.path, configuration: config)
+            MainActor.assumeIsolated {
+                BackupService.snapshotFromDBQueueIfPossible(queue)
+            }
+        } catch {
+            AppLogger.warn("snapshotToBackup：归档 db 无法打开（\(error)），跳过 JSON 抢救")
         }
     }
 
     /// 清理 corrupted/<ISO>/ 归档目录，按目录名字典序（ISO 时间）倒序保留最近 keepCount 个
     /// 目录名格式：corrupted/<ISO8601>（带连字符的 ISO），字典序与时间序一致
-    static func pruneCorruptedArchives(keepCount: Int = 5) {
+    /// 参数化 rootDir 便于单测（与 BackupService.pruneOldWeeklyBackups 等保持一致风格）
+    static func pruneCorruptedArchives(in rootDir: URL, keepCount: Int = 5) {
         let fm = FileManager.default
-        let corruptedRoot = rootDirectory.appendingPathComponent("corrupted", isDirectory: true)
+        let corruptedRoot = rootDir.appendingPathComponent("corrupted", isDirectory: true)
         guard let dirs = try? fm.contentsOfDirectory(at: corruptedRoot,
                                                      includingPropertiesForKeys: nil,
                                                      options: [.skipsHiddenFiles]) else { return }
@@ -176,5 +196,10 @@ enum AppDatabase {
             try? fm.removeItem(at: d)
             AppLogger.info("清理旧 corrupted 归档：\(d.lastPathComponent)")
         }
+    }
+
+    /// 生产路径便捷入口：用 `rootDirectory` 默认参数
+    static func pruneCorruptedArchives(keepCount: Int = 5) {
+        pruneCorruptedArchives(in: rootDirectory, keepCount: keepCount)
     }
 }

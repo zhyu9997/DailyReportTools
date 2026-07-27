@@ -44,14 +44,24 @@ private let intArrayDecoder = JSONDecoder()
 
 enum IntArrayJSON {
     static func encode(_ arr: [Int]) -> String {
-        guard let data = try? intArrayEncoder.encode(arr),
-              let s = String(data: data, encoding: .utf8) else { return "[]" }
-        return s
+        // R23-G：JSONEncoder 对 [Int] 几乎不可能失败，但失败时静默写 "[]" 会让数据看起来正常其实丢失
+        do {
+            let data = try intArrayEncoder.encode(arr)
+            return String(data: data, encoding: .utf8) ?? "[]"
+        } catch {
+            AppLogger.error("IntArrayJSON.encode 失败（\(arr)）：\(error)")
+            return "[]"
+        }
     }
     static func decode(_ s: String?) -> [Int] {
-        guard let s, let data = s.data(using: .utf8),
-              let arr = try? intArrayDecoder.decode([Int].self, from: data) else { return [] }
-        return arr
+        guard let s, let data = s.data(using: .utf8) else { return [] }
+        // R23-G：decode 失败意味着 DB 里存了坏 JSON，记 error 便于发现（不抛破坏读取流程）
+        do {
+            return try intArrayDecoder.decode([Int].self, from: data)
+        } catch {
+            AppLogger.error("IntArrayJSON.decode 失败（raw=\(s)）：\(error)")
+            return []
+        }
     }
 }
 

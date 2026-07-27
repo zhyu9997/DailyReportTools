@@ -21,11 +21,10 @@ struct TagPicker: View {
 
     /// 统一写入口：失败时弹 alert 反馈给用户（与 WorkEntryCard/HistoryView 同模式）
     /// 返回 true 表示写成功，调用方据此决定是否同步本地状态（如 selected）
+    /// R23-D：主体逻辑抽到共享 `performWrite`
     @discardableResult
     private func write(_ block: (AppStore) throws -> Void) -> Bool {
-        guard let store else { return false }
-        do { try block(store); return true }
-        catch { writeError = error.localizedDescription; return false }
+        performWrite(in: store, error: &writeError, block)
     }
 
     var body: some View {

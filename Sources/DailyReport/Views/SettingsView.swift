@@ -235,9 +235,14 @@ struct SettingsView: View {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? Data(contentsOf: url) else { return }
-        pendingRestore = data
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // R23-G：用户主动选了文件，读取失败应给反馈而不是静默 return
+        do {
+            pendingRestore = try Data(contentsOf: url)
+        } catch {
+            AppLogger.warn("导入备份：读取文件失败（\(url.path)）：\(error)")
+            actionError = "读取文件失败：\(error.localizedDescription)"
+        }
     }
 
     private func confirmImport() {

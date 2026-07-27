@@ -485,4 +485,90 @@ import GRDB
             }
         }
     }
+
+    // MARK: - v5：review UNIQUE(meetingId, order) 约束（R23-A 新增）
+
+    /// v5 升级时重排存量 review 的 order：按 meetingId 分组、createdAt 升序连续编号
+    /// 模拟 R23-A 修复前的 TOCTOU 产物（两个 review 都拿到 order=N）
+    @Test func v5MigrationRenumbersDuplicateReviewOrders() throws {
+        let queue = try Self.makeV1Queue()
+        let t1 = Date()
+        let t2 = t1.addingTimeInterval(10)
+        let t3 = t1.addingTimeInterval(20)
+
+        let meetingId = "MMMMMMMM-0000-0000-0000-00000000MMMM"
+        try queue.write { db in
+            // 插一个 meeting 让 FK 通过
+            try db.execute(sql: """
+                INSERT INTO meeting (id, topic, summary, timestamp, createdAt, isRecurring,
+                                     recurrenceUnitRaw, recurrenceInterval,
+                                     recurrenceWeekdays, recurrenceMonthDays)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [meetingId, "M", "", t1, t1, false, "每天", 1, "[]", "[]"])
+            // 3 个 review，全部 order=0（模拟 TOCTOU 产物）；createdAt 升序决定新 order
+            try db.execute(sql: """
+                INSERT INTO review (id, reviewer, opinion, "order", createdAt, meetingId)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: ["R1R1R1R1-0000-0000-0000-000000R1R1R1", "A", "", 0, t1, meetingId])
+            try db.execute(sql: """
+                INSERT INTO review (id, reviewer, opinion, "order", createdAt, meetingId)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: ["R2R2R2R2-0000-0000-0000-000000R2R2R2", "B", "", 0, t2, meetingId])
+            try db.execute(sql: """
+                INSERT INTO review (id, reviewer, opinion, "order", createdAt, meetingId)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: ["R3R3R3R3-0000-0000-0000-000000R3R3R3", "C", "", 0, t3, meetingId])
+        }
+
+        try AppMigrator.makeMigrator().migrate(queue)
+
+        // 重排后：order 按 createdAt 升序连续 0,1,2
+        let orders = try queue.read { db in
+            try Int.fetchAll(db,
+                sql: "SELECT \"order\" FROM review WHERE meetingId = ? ORDER BY \"order\" ASC",
+                arguments: [meetingId])
+        }
+        #expect(orders == [0, 1, 2])
+
+        // UNIQUE 索引已建：再插一条 (meetingId, order=0) 应抛约束错误
+        #expect(throws: Error.self) {
+            try queue.write { db in
+                try db.execute(sql: """
+                    INSERT INTO review (id, reviewer, opinion, "order", createdAt, meetingId)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, arguments: ["R4R4R4R4-0000-0000-0000-000000R4R4R4", "D", "", 0, Date(), meetingId])
+            }
+        }
+    }
+
+    /// v5 在无重复 order 的库上应是 no-op（保留所有原数据）
+    @Test func v5MigrationNoOpOnCleanDatabase() throws {
+        let queue = try Self.makeV1Queue()
+        let meetingId = "NNNNNNNN-0000-0000-0000-00000000NNNN"
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO meeting (id, topic, summary, timestamp, createdAt, isRecurring,
+                                     recurrenceUnitRaw, recurrenceInterval,
+                                     recurrenceWeekdays, recurrenceMonthDays)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, arguments: [meetingId, "M", "", Date(), Date(), false, "每天", 1, "[]", "[]"])
+            try db.execute(sql: """
+                INSERT INTO review (id, reviewer, opinion, "order", createdAt, meetingId)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: ["X1X1X1X1-0000-0000-0000-000000X1X1X1", "A", "", 0, Date(), meetingId])
+            try db.execute(sql: """
+                INSERT INTO review (id, reviewer, opinion, "order", createdAt, meetingId)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, arguments: ["X2X2X2X2-0000-0000-0000-000000X2X2X2", "B", "", 1, Date(), meetingId])
+        }
+
+        try AppMigrator.makeMigrator().migrate(queue)
+
+        let orders = try queue.read { db in
+            try Int.fetchAll(db,
+                sql: "SELECT \"order\" FROM review WHERE meetingId = ? ORDER BY \"order\" ASC",
+                arguments: [meetingId])
+        }
+        #expect(orders == [0, 1])
+    }
 }

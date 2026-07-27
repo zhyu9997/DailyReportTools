@@ -18,11 +18,10 @@ struct MenuPanelView: View {
     @State private var writeError: String?
 
     /// 统一写入口：返回 true 表示成功，调用方据此决定是否 reset 草稿；失败弹 alert
+    /// R23-D：主体逻辑抽到共享 `performWrite`
     @discardableResult
     private func write(_ block: (AppStore) throws -> Void) -> Bool {
-        guard let store else { return false }
-        do { try block(store); return true }
-        catch { writeError = error.localizedDescription; return false }
+        performWrite(in: store, error: &writeError, block)
     }
 
     private var allEntries: [WorkEntryRecord] { store?.entries ?? [] }
@@ -261,7 +260,7 @@ struct MenuPanelView: View {
     }
 
     private func sectionHeader(_ kind: WorkKind, count: Int) -> some View {
-        let color = kindColor(kind)
+        let color = kind.color()
         return HStack(spacing: 5) {
             Image(systemName: kind.icon)
                 .foregroundStyle(color)
@@ -281,7 +280,7 @@ struct MenuPanelView: View {
     }
 
     private func entryRow(_ e: WorkEntryRecord) -> some View {
-        let color = kindColor(e.kind, status: e.blockerStatus)
+        let color = e.kind.color(status: e.blockerStatus)
         let dateText: String = (e.kind == .done || e.kind == .planned)
             ? (e.finishDate ?? e.timestamp).friendlyDate
             : e.timestamp.friendlyDate
@@ -306,28 +305,13 @@ struct MenuPanelView: View {
                 .lineLimit(1)
                 .foregroundStyle(e.isOverdue ? .red : .primary)
             if e.isOverdue {
-                Text("逾期")
-                    .font(.system(size: 9).weight(.semibold))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(Color.red.opacity(0.15))
-                    .foregroundStyle(.red)
-                    .clipShape(Capsule())
+                BadgeChip.overdue(size: .compact)
             }
             if e.kind == .planned {
-                Text(e.priority.localizedName)
-                    .font(.system(size: 9).weight(.semibold))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(e.priority.swiftUIColor.opacity(0.15))
-                    .foregroundStyle(e.priority.swiftUIColor)
-                    .clipShape(Capsule())
+                BadgeChip.priority(e.priority, size: .compact)
             }
             if e.kind == .blocker {
-                Text(e.blockerStatus.localizedName)
-                    .font(.system(size: 9).weight(.semibold))
-                    .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(e.blockerStatus.swiftUIColor.opacity(0.15))
-                    .foregroundStyle(e.blockerStatus.swiftUIColor)
-                    .clipShape(Capsule())
+                BadgeChip.blockerStatus(e.blockerStatus, size: .compact)
             }
             if e.isRecurring && e.kind == .planned {
                 Image(systemName: "repeat")
@@ -377,10 +361,6 @@ struct MenuPanelView: View {
             draft.reset()
         }
     }
-
-    private func kindColor(_ k: WorkKind, status: BlockerStatus = .ongoing) -> Color {
-        switch k { case .done: .green; case .planned: .blue; case .blocker: status.swiftUIColor }
-    }
 }
 
 /// 菜单栏面板的会议行：点击展开内联编辑概要
@@ -407,12 +387,7 @@ private struct MeetingPanelRow: View {
                         .font(.caption)
                         .lineLimit(1)
                     if meeting.isRecurring {
-                        Text(meeting.recurrenceLabel)
-                            .font(.system(size: 9).weight(.semibold))
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(Color.purple.opacity(0.15))
-                            .foregroundStyle(.purple)
-                            .clipShape(Capsule())
+                        BadgeChip.recurrence(meeting.recurrenceLabel, color: .purple, size: .compact)
                     }
                     Spacer()
                     Text(meeting.timestamp.formatted(date: .omitted, time: .shortened))

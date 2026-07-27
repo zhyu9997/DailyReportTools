@@ -50,11 +50,7 @@ struct MeetingBoardCard: View {
             if !tags.isEmpty {
                 HStack(spacing: 3) {
                     ForEach(tags) { tag in
-                        Text(tag.name)
-                            .font(.system(size: 9))
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(tag.swiftUIColor.opacity(0.2))
-                            .clipShape(Capsule())
+                        BadgeChip.tag(tag, size: .compact)
                     }
                 }
             }

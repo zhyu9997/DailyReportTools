@@ -203,6 +203,26 @@ enum AppMigrator {
             }
             try db.create(index: "uq_tag_name", on: "tag", columns: ["name"], unique: true)
         }
+        // v5：review 加 UNIQUE(meetingId, order) 约束，防 addReview 在多窗口并发时
+        // 两个调用者都读到 count=N 都插入 order=N（与 v2 daily_report TOCTOU 同模式）
+        // 存量库可能有重复：按 meetingId 分组、按 createdAt 升序重新分配连续 order（0,1,2...）
+        m.registerMigration("v5_unique_review_meeting_order") { db in
+            // 找出所有有 review 的 meetingId
+            let meetingIds = try String.fetchAll(db,
+                sql: "SELECT DISTINCT meetingId FROM review WHERE meetingId IS NOT NULL")
+            for mid in meetingIds {
+                // 按 createdAt 升序拉该会议的所有 review id（保最早创建的 order 最小）
+                let ids = try String.fetchAll(db,
+                    sql: "SELECT id FROM review WHERE meetingId = ? ORDER BY createdAt ASC",
+                    arguments: [mid])
+                for (idx, id) in ids.enumerated() {
+                    try db.execute(sql: "UPDATE review SET \"order\" = ? WHERE id = ?",
+                                   arguments: [idx, id])
+                }
+            }
+            try db.create(index: "uq_review_meeting_order",
+                          on: "review", columns: ["meetingId", "order"], unique: true)
+        }
         return m
     }
 }

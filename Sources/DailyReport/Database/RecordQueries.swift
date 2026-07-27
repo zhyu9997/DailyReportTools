@@ -14,14 +14,35 @@ enum RecordQueries {
         }
     }
 
+    /// 4 张 tag 多对多中间表的标识。
+    /// R23-L：原版 `fetchTagMap(linkTable: String, ownerColumn: String)` 接受任意字符串拼到 SQL，
+    /// 当前调用方都硬编码，但签名层面是 SQL 注入风险面。改为 enum 后编译期穷举，
+    /// 未来加新中间表只需扩一个 case + Migrator 建表
+    enum TagLinkTable: String {
+        case dailyReport = "tag_daily_report"
+        case todo        = "tag_todo"
+        case workEntry   = "tag_work_entry"
+        case meeting     = "tag_meeting"
+
+        /// owner 列名（与 Migrator 建表保持一致）
+        var ownerColumn: String {
+            switch self {
+            case .dailyReport: return "reportId"
+            case .todo:        return "todoId"
+            case .workEntry:   return "entryId"
+            case .meeting:     return "meetingId"
+            }
+        }
+    }
+
     /// 返回 [ownerId: [TagRecord]]
     /// 实现：SELECT 中间表全量 → 按 tagId 在 allTagsById 字典里取 → 按 owner 分组
     /// 调用方（reloadAll）应预读 1 次 allTagsById 复用给 4 张中间表，避免 4 次全表 Tag 扫描
     static func fetchTagMap(_ db: Database,
-                            linkTable: String,
-                            ownerColumn: String,
+                            link: TagLinkTable,
                             allTagsById: [UUID: TagRecord]? = nil) throws -> [UUID: [TagRecord]] {
-        let sql = "SELECT tagId, \(ownerColumn) AS ownerId FROM \(linkTable)"
+        // 表名 / 列名走 enum 编译期约束，杜绝 SQL 注入风险面
+        let sql = "SELECT tagId, \(link.ownerColumn) AS ownerId FROM \(link.rawValue)"
         let rows: [LinkRow] = try LinkRow.fetchAll(db, sql: sql)
 
         let tagsById: [UUID: TagRecord]

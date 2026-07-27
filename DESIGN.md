@@ -30,7 +30,7 @@ App 由三个 SwiftUI Scene 组成，共享同一个 `AppStore`（持有 GRDB `D
 ├── MenuBarExtra                ← 菜单栏图标 ✅ checklist + 弹出面板（MenuPanelView）
 │   .menuBarExtraStyle(.window) ← 系统托管窗口，点外部自动收起
 ├── Window("DailyReport", id: AppState.mainWindowID)
-│   └── MainTabView             ← 主窗口五 Tab
+│   └── MainTabView             ← 主窗口四 Tab
 └── Settings
     └── SettingsView            ← 系统设置窗
 ```
@@ -43,7 +43,7 @@ App 由三个 SwiftUI Scene 组成，共享同一个 `AppStore`（持有 GRDB `D
 
 1. **`AppLogger.migrateFromLegacyIfNeeded()`** — 一次性把日志从 `db/logs/` 迁到 app 同级 `logs/`（旧目录已空时一并删除）
 2. **`AppDatabase.openOrRecover()`** — 打开 / 迁移 GRDB 主库（三级容错链路，详见 9.6）
-   - 主库 `db/db.sqlite` 能打开 → 跑 `AppMigrator` 迁移（v1_initial + v2_unique_daily_report_date）→ 返回 `OpenResult(recovered: false)`
+   - 主库 `db/db.sqlite` 能打开 → 跑 `AppMigrator` 迁移（v1_initial + v2_unique_daily_report_date + v4_unique_tag_name + v5_unique_review_meeting_order）→ 返回 `OpenResult(recovered: false)`
    - 主库失败 → `archiveCorruptedDB` 把 `db.sqlite{,-wal,-shm}` 整体移到 `db/corrupted/<ISO>/` → `snapshotToBackup` 用只读 GRDB 打开归档文件抢救 JSON（`salvage-*.json`）→ 主路径空库重建
    - 主路径仍失败 → 切到 `db/db.fallback.sqlite`（最后兜底）
    - 全部失败 → `fatalError`（极端情况）
@@ -90,7 +90,7 @@ Sources/DailyReport/
 ├── NavigationCoordinator.swift    # 主窗口 Tab 选中态（AppTab enum）+ 跨页跳转请求
 ├── Database/                      # GRDB 持久层（6 文件）
 │   ├── Records.swift              # 6 主表 struct + 4 中间表 struct + 4 枚举 DatabaseValueConvertible + IntArrayJSON + 草稿（NewXxx）
-│   ├── Migrator.swift             # AppMigrator（v1_initial + v2_unique_daily_report_date 去重 + UNIQUE 索引）
+│   ├── Migrator.swift             # AppMigrator（v1_initial + v2/v4/v5 去重 + UNIQUE 索引）
 │   ├── AppDatabase.swift          # 三级容错：openOrRecover / archiveCorruptedDB / snapshotToBackup / pruneCorruptedArchives
 │   ├── AppStore.swift             # @Observable @MainActor，持有 dbQueue，只读快照 + 集中写入口 + markEntryDone + truncateAll
 │   ├── RecordQueries.swift        # JOIN helper：fetchTagMap / fetchReviewsByMeeting
@@ -143,7 +143,7 @@ DailyReport 1───* Tag *───* WorkEntry     （通过 tag_daily_report
 - **Tag** 是中心枢纽，通过 4 张中间表与 DailyReport / WorkEntry / Meeting / TodoItem 建立多对多（复合主键 + 双向 `ON DELETE CASCADE`）
 - **Meeting → Review** 一对多，`review.meetingId` 外键 + `ON DELETE CASCADE`（会议删除连带评审）
 - **DailyReport.date 加 UNIQUE 约束**（v2 迁移）：杜绝 `getOrCreateReport` 多窗口并发时的 TOCTOU 竞态产生重复行
-- 所有 Record 都是 `struct : FetchableRecord, MutablePersistableRecord, Identifiable`，主键 `id` 存为 `TEXT`（`UUID.uuidString`）。没有 `VersionedSchema`（GRDB 用 `DatabaseMigrator`，当前 `v1_initial` + `v2_unique_daily_report_date`）
+- 所有 Record 都是 `struct : FetchableRecord, MutablePersistableRecord, Identifiable`，主键 `id` 存为 `TEXT`（`UUID.uuidString`）。没有 `VersionedSchema`（GRDB 用 `DatabaseMigrator`，当前 `v1_initial` + `v2_unique_daily_report_date` + `v4_unique_tag_name` + `v5_unique_review_meeting_order`，无 v3）
 - 关系不直接持有：Record 里没有 `tags: [TagRecord]` / `reviews: [ReviewRecord]` 字段，而是由 `AppStore` 在 `reloadAll()` 时通过 `RecordQueries` 一次性 JOIN 拉取，暴露为 `tagsByEntry / reviewsByMeeting` 等关系映射字典
 - **CASCADE 在迁移期不生效**：GRDB `DatabaseMigrator.foreignKeysEnabled` 默认 false（防 schema 变更被 FK 拦截），任何依赖 CASCADE 的 migration 必须显式 DELETE 子表关系（v2 即如此）
 
@@ -299,6 +299,8 @@ DailyReport 1───* Tag *───* WorkEntry     （通过 tag_daily_report
 
 ### 5.7 TodoItemRecord（独立待办）
 
+> **注**：R19 已删除「待办」Tab，`TodoListView.swift` 同步删除。表与 Record 保留作为后续扩展占位，当前无 UI 调用方；`AppStore.todos / tagsByTodo` 仍会加载（保留数据，便于未来恢复）。
+
 文件：`Database/Records.swift`（`struct TodoItemRecord`，表名 `todo_item`）。
 
 | 字段（DB 列） | SQLite 类型 | Swift 类型 | 默认 | 用途 |
@@ -314,8 +316,6 @@ DailyReport 1───* Tag *───* WorkEntry     （通过 tag_daily_report
 > 标签关系通过 `tag_todo` 中间表，`AppStore.tagsByTodo[todoId]` 返回。
 
 **Computed**：`isOverdue: Bool` — `dueDate < Date() && !isDone`
-
-> 待办页同时显示独立 TodoItemRecord + 来自时间线的「计划」WorkEntryRecord，但两者是不同 Record，互不转换。
 
 ### 5.8 Recurrence（纯函数工具）
 
@@ -555,22 +555,9 @@ WeeklyReportView 另挂一个 `.onReceive(...)` 把 `weekAnchor = Date()`，让�
 - `.draggable(entry.id.uuidString)` 提供拖拽数据
 - 标签行支持右键移除；标签 Menu 支持「新建标签…」popover
 
-### 7.5 TodoListView（待办）
+### 7.5 TodoListView（已删除 R19）
 
-**布局**：
-
-1. **filterBar**：TagFilterMenu + 清除筛选
-2. **content**：空态 or todoList
-3. **toolbar**：「含已完成」checkbox Toggle
-
-**todoList**（List）：
-
-- **Section「计划任务（来自时间线）」**：所有 `kind == .planned` 的 WorkEntry
-  - `plannedRow`：`calendar.badge.clock` 完成按钮（调 `store.markEntryDone`）+ 标题 + 相对时间 + 删除按钮（pendingDeleteEntry alert）
-- **Section「待办」**：所有 TodoItem（按 selectedTag / showCompleted 筛选）
-  - `TodoRow`：完成圆圈按钮（toggle `isDone / completedAt`）+ 标题（完成时划线）+ 截止日 + 标签 chips
-
-两 Section 都支持 `.onDelete` 滑动删除。
+R19 合并了「待办」与「时间线」：独立待办 Tab 删除，`TodoListView.swift` 同步移除。原计划的「计划任务 Section」由 `TodayView.plannedList` + `HistoryView` 看板列承载；`TodoItemRecord` 表保留供未来扩展。
 
 ### 7.6 MeetingView（会议纪要）
 
@@ -1060,7 +1047,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 - **SMAppService 签名要求**：ad-hoc 签名在大多数 macOS 版本能注册登录项，个别版本可能拒绝；失败时开关自动回滚 + 蜂鸣，回退到系统设置手动加登录项。
 - **导出**：当前仅 UI 暴露周报 XLSX（带星期列，按完成日排序）。概要/时间线的历史 Markdown/CSV 导出入口已移除（代码路径保留，未在 UI 暴露）。
 - **无云同步**：纯本地 GRDB SQLite；跨设备需手动 JSON 导出/导入。
-- **无 VersionedSchema**：schema 变更通过 GRDB `DatabaseMigrator` 显式注册迁移（当前 `v1_initial` + `v2_unique_daily_report_date`）；主库损坏靠归档 + JSON 抢救 + 空库重建兜底（个人工具的权衡）。
+- **无 VersionedSchema**：schema 变更通过 GRDB `DatabaseMigrator` 显式注册迁移（当前 `v1_initial` + `v2_unique_daily_report_date` + `v4_unique_tag_name` + `v5_unique_review_meeting_order`）；主库损坏靠归档 + JSON 抢救 + 空库重建兜底（个人工具的权衡）。
 
 ## 16. 未来可能扩展（未实现）
 

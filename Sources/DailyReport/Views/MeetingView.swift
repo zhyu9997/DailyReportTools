@@ -78,12 +78,7 @@ struct MeetingCard: View {
                 Image(systemName: "person.3.fill").foregroundStyle(.tint)
                 Text(meeting.topic).font(.headline)
                 if meeting.isRecurring {
-                    Label(meeting.recurrenceLabel, systemImage: "repeat")
-                        .font(.caption2)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Color.purple.opacity(0.15))
-                        .foregroundStyle(.purple)
-                        .clipShape(Capsule())
+                    BadgeChip.recurrence(meeting.recurrenceLabel, color: .purple)
                 }
                 Spacer()
                 Text(meeting.timestamp.relativeTime)
@@ -93,11 +88,7 @@ struct MeetingCard: View {
             if !tags.isEmpty {
                 HStack(spacing: 4) {
                     ForEach(tags) { tag in
-                        Text(tag.name)
-                            .font(.caption2)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(tag.swiftUIColor.opacity(0.2))
-                            .clipShape(Capsule())
+                        BadgeChip.tag(tag)
                     }
                 }
             }
@@ -191,11 +182,10 @@ struct MeetingCard: View {
     }
 
     /// 统一写入口：返回 true 表示成功，失败时弹 alert 反馈（与 WorkEntryCard/TagPicker 同模式）
+    /// R23-D：主体逻辑抽到共享 `performWrite`
     @discardableResult
     private func write(_ block: (AppStore) throws -> Void) -> Bool {
-        guard let store else { return false }
-        do { try block(store); return true }
-        catch { writeError = error.localizedDescription; return false }
+        performWrite(in: store, error: &writeError, block)
     }
 
     private func cancelAdd() {

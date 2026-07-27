@@ -19,10 +19,9 @@ struct TodayView: View {
     private var allMeetings: [MeetingRecord] { store?.meetings ?? [] }
 
     /// 统一写入口：失败时弹 alert 反馈给用户（与 WorkEntryCard/HistoryView 同模式）
+    /// R23-D：主体逻辑抽到共享 `performWrite`，避免 6 处复制粘贴
     private func write(_ block: (AppStore) throws -> Void) {
-        guard let store else { return }
-        do { try block(store) }
-        catch { writeError = error.localizedDescription }
+        _ = performWrite(in: store, error: &writeError, block)
     }
 
     private func todayEntries(for report: DailyReportRecord) -> [WorkEntryRecord] {
@@ -271,27 +270,12 @@ struct TodayView: View {
             Text(e.title)
                 .font(.body)
                 .foregroundStyle(e.isOverdue ? .red : .primary)
-            Label(p.localizedName, systemImage: "flag.fill")
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(p.swiftUIColor.opacity(0.15))
-                .foregroundStyle(p.swiftUIColor)
-                .clipShape(Capsule())
+            BadgeChip.priority(p)
             if e.isOverdue {
-                Text("逾期")
-                    .font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Color.red.opacity(0.15))
-                    .foregroundStyle(.red)
-                    .clipShape(Capsule())
+                BadgeChip.overdue()
             }
             if e.isRecurring {
-                Label(e.recurrenceLabel, systemImage: "repeat")
-                    .font(.caption2)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(p.swiftUIColor.opacity(0.15))
-                    .foregroundStyle(p.swiftUIColor)
-                    .clipShape(Capsule())
+                BadgeChip.recurrence(e.recurrenceLabel, color: p.swiftUIColor)
             }
             Spacer()
             Text(dateText)
@@ -388,12 +372,7 @@ private struct TodayMeetingRow: View {
                     .font(.caption)
                 Text(meeting.topic).font(.body.weight(.semibold))
                 if meeting.isRecurring {
-                    Label(meeting.recurrenceLabel, systemImage: "repeat")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Color.purple.opacity(0.15))
-                        .foregroundStyle(.purple)
-                        .clipShape(Capsule())
+                    BadgeChip.recurrence(meeting.recurrenceLabel, color: .purple)
                 }
                 Spacer(minLength: 0)
                 Text(meeting.timestamp.formatted(date: .omitted, time: .shortened))
@@ -404,11 +383,7 @@ private struct TodayMeetingRow: View {
             if !tags.isEmpty {
                 HStack(spacing: 3) {
                     ForEach(tags) { tag in
-                        Text(tag.name)
-                            .font(.caption2)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(tag.swiftUIColor.opacity(0.2))
-                            .clipShape(Capsule())
+                        BadgeChip.tag(tag)
                     }
                 }
             }
