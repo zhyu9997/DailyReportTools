@@ -122,23 +122,11 @@ extension BackupService {
     nonisolated static func weeklyWrittenToday(in directory: URL, now: Date) -> Bool {
         let cal = Calendar.current
         let today = cal.dateComponents([.year, .month, .day], from: now)
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: [.skipsHiddenFiles]) else { return false }
-        for f in files {
-            let name = f.lastPathComponent
-            guard name.hasPrefix("\(weeklyPrefix)-") && name.hasSuffix(".json") else { continue }
-            let body = String(name.dropFirst("\(weeklyPrefix)-".count).dropLast(".json".count))
-            guard body.count > 11 else { continue }
-            let isoStr = String(body.dropLast(11))
-            guard let date = parseISO8601(isoStr) else { continue }
+        return enumerateBackups(in: directory, prefix: weeklyPrefix, suffixLength: 10).contains { entry in
+            guard let date = entry.date else { return false }
             let comps = cal.dateComponents([.year, .month, .day], from: date)
-            if comps.year == today.year && comps.month == today.month && comps.day == today.day {
-                return true
-            }
+            return comps.year == today.year && comps.month == today.month && comps.day == today.day
         }
-        return false
     }
 
     /// 删除今天的 boot-*.json（保持同日只留最新一份）
@@ -148,18 +136,11 @@ extension BackupService {
         let cal = Calendar.current
         let today = cal.dateComponents([.year, .month, .day], from: now)
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: [.skipsHiddenFiles]) else { return }
-        for f in files {
-            let name = f.lastPathComponent
-            guard name.hasPrefix("boot-") && name.hasSuffix(".json") else { continue }
-            // boot-<ISO>.json → <ISO>
-            let isoStr = String(name.dropFirst("boot-".count).dropLast(".json".count))
-            guard let date = parseISO8601(isoStr) else { continue }
+        for entry in enumerateBackups(in: directory, prefix: "boot") {
+            guard let date = entry.date else { continue }
             let fComps = cal.dateComponents([.year, .month, .day], from: date)
             if fComps.year == today.year && fComps.month == today.month && fComps.day == today.day {
-                try? fm.removeItem(at: f)
+                try? fm.removeItem(at: entry.url)
             }
         }
     }
@@ -167,14 +148,51 @@ extension BackupService {
     /// 是否已存在某周备份：精确后缀匹配 `-<weekKey>.json`，避免 contains 误命中
     /// 参数化目录便于单测
     nonisolated static func weeklyBackupExists(in directory: URL, weekKey: String) -> Bool {
+        enumerateBackups(in: directory, prefix: weeklyPrefix, suffixLength: 10).contains { $0.suffix == weekKey }
+    }
+
+    // MARK: - 备份枚举 helper（R25-C 抽出）
+
+    /// 单条备份的解析结果
+    struct BackupEntry {
+        let url: URL
+        let iso: String          // 文件名里的 ISO8601 时间戳原文（用于排序）
+        let suffix: String?      // weekly- 含 weekKey 后缀；其他 prefix 为 nil
+        let date: Date?          // 由 iso 解析得到，无法解析则为 nil
+    }
+
+    /// 列出 directory 下 `<prefix>-*.json` 备份并解析文件名结构。
+    /// R25-C：原版 6 个方法（weeklyWrittenToday / removeSameDayBoots / weeklyBackupExists /
+    /// pruneOldWeeklyBackups / prunePrecedingMonthWeeklyBackups / pruneOldBackups）各写一份
+    /// 「列目录 + hasPrefix/hasSuffix 过滤 + 剥前后缀拿 ISO」样板。改为统一 helper 后，
+    /// 各方法只写自己的「用」逻辑（按时间筛选 / 排序保留 N / 年月比较）
+    ///
+    /// - Parameters:
+    ///   - suffixLength: 文件名末尾固定长度后缀（不含分隔符）。weekly- 文件含 10 字符 weekKey，
+    ///     传 10；其他 prefix 无后缀，传 0（默认）
+    nonisolated static func enumerateBackups(in directory: URL,
+                                              prefix: String,
+                                              suffixLength: Int = 0) -> [BackupEntry] {
         let fm = FileManager.default
-        let suffix = "-\(weekKey).json"
         guard let files = try? fm.contentsOfDirectory(at: directory,
                                                       includingPropertiesForKeys: nil,
-                                                      options: [.skipsHiddenFiles]) else { return false }
-        return files.contains { name in
-            name.lastPathComponent.hasPrefix("\(weeklyPrefix)-") && name.lastPathComponent.hasSuffix(suffix)
+                                                      options: [.skipsHiddenFiles]) else { return [] }
+        let header = "\(prefix)-"
+        var entries: [BackupEntry] = []
+        for f in files {
+            let name = f.lastPathComponent
+            guard name.hasPrefix(header) && name.hasSuffix(".json") else { continue }
+            let body = String(name.dropFirst(header.count).dropLast(".json".count))
+            if suffixLength > 0, body.count > suffixLength + 1 {
+                // body = "<ISO>-<suffix>"（分隔符 1 字符）
+                let isoStr = String(body.dropLast(suffixLength + 1))
+                let suffix = String(body.suffix(suffixLength))
+                entries.append(BackupEntry(url: f, iso: isoStr, suffix: suffix, date: parseISO8601(isoStr)))
+            } else {
+                entries.append(BackupEntry(url: f, iso: body, suffix: nil, date: parseISO8601(body)))
+            }
         }
+        return entries
     }
 
     // MARK: - Prune 策略
@@ -183,23 +201,10 @@ extension BackupService {
     /// 月清理漏掉、或用户手动复制大量文件时防止失控
     /// 参数化目录便于单测
     nonisolated static func pruneOldWeeklyBackups(in directory: URL, keepCount: Int) {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: [.skipsHiddenFiles]) else { return }
-        var items: [(url: URL, iso: String)] = []
-        for f in files {
-            let name = f.lastPathComponent
-            guard name.hasPrefix("\(weeklyPrefix)-") && name.hasSuffix(".json") else { continue }
-            let body = String(name.dropFirst("\(weeklyPrefix)-".count).dropLast(".json".count))
-            // body = "<ISO8601>-<weekKey>"，weekKey 长 10 字符 + 1 个连字符 = 11
-            guard body.count > 11 else { continue }
-            let isoStr = String(body.dropLast(11))
-            items.append((f, isoStr))
-        }
-        // 按 ISO 字符串倒序（与时间倒序一致），保留前 keepCount 个
-        let sorted = items.sorted { $0.iso > $1.iso }
+        let sorted = enumerateBackups(in: directory, prefix: weeklyPrefix, suffixLength: 10)
+            .sorted { $0.iso > $1.iso }
         guard sorted.count > keepCount else { return }
+        let fm = FileManager.default
         for item in sorted.dropFirst(keepCount) {
             try? fm.removeItem(at: item.url)
             AppLogger.info("清理过期 weekly（保留最近 \(keepCount) 份）：\(item.url.lastPathComponent)")
@@ -215,26 +220,14 @@ extension BackupService {
         guard let curYear = cur.year, let curMonth = cur.month else { return }
 
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: [.skipsHiddenFiles]) else { return }
-        for f in files {
-            let name = f.lastPathComponent
-            guard name.hasPrefix("\(weeklyPrefix)-") && name.hasSuffix(".json") else { continue }
-            // 文件名格式：weekly-<ISO8601>-<weekKey>.json
-            // 剥前后缀：<ISO8601>-<weekKey>
-            let body = String(name.dropFirst("\(weeklyPrefix)-".count).dropLast(".json".count))
-            // 末尾 weekKey = "yyyy-MM-dd"，前面是 ISO8601 时间戳（带 T 和时区 Z）
-            // weekKey 长度固定 10，前面有 "-" 分隔
-            guard body.count > 11 else { continue }
-            let isoStr = String(body.dropLast(11))   // 去掉 "-yyyy-MM-dd"
-            guard let date = parseISO8601(isoStr) else { continue }
+        for entry in enumerateBackups(in: directory, prefix: weeklyPrefix, suffixLength: 10) {
+            guard let date = entry.date else { continue }
             let bComps = cal.dateComponents([.year, .month], from: date)
             guard let bYear = bComps.year, let bMonth = bComps.month else { continue }
             // backup 的年月严格早于当前年月 → 删除
             if (bYear < curYear) || (bYear == curYear && bMonth < curMonth) {
-                try? fm.removeItem(at: f)
-                AppLogger.info("清理上月周备份：\(name)")
+                try? fm.removeItem(at: entry.url)
+                AppLogger.info("清理上月周备份：\(entry.url.lastPathComponent)")
             }
         }
     }
@@ -244,21 +237,10 @@ extension BackupService {
     ///（creationDate 在 cp / tar 解压后会被重置，导致误判「最新」而删错）
     /// 参数化目录 + keepCount 便于单测
     nonisolated static func pruneOldBackups(in directory: URL, prefix: String, keepCount: Int = 10) {
+        let sorted = enumerateBackups(in: directory, prefix: prefix)
+            .sorted { $0.iso > $1.iso }
+        guard sorted.count > keepCount else { return }
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: [.skipsHiddenFiles]) else { return }
-        var items: [(url: URL, iso: String)] = []
-        for f in files {
-            let name = f.lastPathComponent
-            guard name.hasPrefix("\(prefix)-") && name.hasSuffix(".json") else { continue }
-            // <prefix>-<ISO>.json → <ISO>
-            let isoStr = String(name.dropFirst("\(prefix)-".count).dropLast(".json".count))
-            items.append((f, isoStr))
-        }
-        guard items.count > keepCount else { return }
-        // 按 ISO 字符串倒序（与时间倒序一致），保留前 keepCount 个
-        let sorted = items.sorted { $0.iso > $1.iso }
         for item in sorted.dropFirst(keepCount) {
             try? fm.removeItem(at: item.url)
         }

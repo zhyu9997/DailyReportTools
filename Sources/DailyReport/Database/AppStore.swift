@@ -179,10 +179,8 @@ final class AppStore {
         )
         try writeOrThrow { db in
             try rec.insert(db)
-            for tid in draft.tagIds {
-                try db.execute(sql: "INSERT INTO tag_todo (tagId, todoId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, rec.id.uuidString])
-            }
+            // R25-A：复用 replaceTagLinks（DELETE 在新 owner 上是 no-op，等价于纯 INSERT）
+            try RecordQueries.replaceTagLinks(db, link: .todo, ownerId: rec.id, tagIds: draft.tagIds)
         }
         return rec
     }
@@ -230,10 +228,7 @@ final class AppStore {
         var rec = draft.toRecord()
         try writeOrThrow { db in
             try rec.insert(db)
-            for tid in draft.tagIds {
-                try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, rec.id.uuidString])
-            }
+            try RecordQueries.replaceTagLinks(db, link: .workEntry, ownerId: rec.id, tagIds: draft.tagIds)
         }
         return rec
     }
@@ -246,12 +241,7 @@ final class AppStore {
             mutations(&rec)
             try rec.update(db)
             if let ids = newTagIds {
-                try db.execute(sql: "DELETE FROM tag_work_entry WHERE entryId = ?",
-                               arguments: [id.uuidString])
-                for tid in ids {
-                    try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
-                                   arguments: [tid.uuidString, id.uuidString])
-                }
+                try RecordQueries.replaceTagLinks(db, link: .workEntry, ownerId: id, tagIds: ids)
             }
         }
     }
@@ -316,15 +306,12 @@ final class AppStore {
                     createdAt: Date()
                 )
                 try next.insert(db)
-                // 复制 tag 关系
+                // 复制 tag 关系：fetch 原 entry 的 tag 列表 → replaceTagLinks 给新 entry
                 let tagIds = try UUID.fetchAll(
                     db,
                     sql: "SELECT tagId FROM tag_work_entry WHERE entryId = ?",
                     arguments: [current.id.uuidString])
-                for tid in tagIds {
-                    try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
-                                   arguments: [tid.uuidString, next.id.uuidString])
-                }
+                try RecordQueries.replaceTagLinks(db, link: .workEntry, ownerId: next.id, tagIds: tagIds)
                 spawned = next
             }
 
@@ -347,10 +334,7 @@ final class AppStore {
         var rec = draft.toRecord()
         try writeOrThrow { db in
             try rec.insert(db)
-            for tid in draft.tagIds {
-                try db.execute(sql: "INSERT INTO tag_meeting (tagId, meetingId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, rec.id.uuidString])
-            }
+            try RecordQueries.replaceTagLinks(db, link: .meeting, ownerId: rec.id, tagIds: draft.tagIds)
             // R21-A 测试发现：原版用 r.order，但 NewReview.order 默认 0，调用方很少显式传，
             // 导致批量插入的 review 全部 order=0，UI 显示顺序乱掉。
             // 改为按数组下标（与 setMeetingReviews 一致），保证顺序由调用方数组决定

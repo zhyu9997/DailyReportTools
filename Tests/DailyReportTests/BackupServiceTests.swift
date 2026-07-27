@@ -43,6 +43,29 @@ import Foundation
         #expect(BackupService.weekKey(for: sun) == "2026-07-20")
     }
 
+    // R25-G：补全 Tue/Wed/Thu 三个 weekday + 跨月 / 跨年边界
+    @Test func weekKeyTuesday() {
+        #expect(BackupService.weekKey(for: Self.makeDate(2026, 7, 21)) == "2026-07-20")
+    }
+
+    @Test func weekKeyWednesday() {
+        #expect(BackupService.weekKey(for: Self.makeDate(2026, 7, 22)) == "2026-07-20")
+    }
+
+    @Test func weekKeyThursday() {
+        #expect(BackupService.weekKey(for: Self.makeDate(2026, 7, 23)) == "2026-07-20")
+    }
+
+    /// 月初落在周三：本周一在上一月（2026-08-01 周六 → 周一 2026-07-27）
+    @Test func weekKeyCrossMonthBoundary() {
+        #expect(BackupService.weekKey(for: Self.makeDate(2026, 8, 1)) == "2026-07-27")
+    }
+
+    /// 年末跨年：2026-01-01 周四 → 周一 2025-12-29
+    @Test func weekKeyCrossYearBoundary() {
+        #expect(BackupService.weekKey(for: Self.makeDate(2026, 1, 1)) == "2025-12-29")
+    }
+
     // MARK: - weeklyBackupExists
 
     @Test func weeklyBackupExistsExactSuffix() throws {

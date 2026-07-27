@@ -61,12 +61,7 @@ struct MenuPanelView: View {
         }
         .padding(14)
         .frame(width: 380, height: 540)
-        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
-            nowTick = Date()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
-            nowTick = Date()
-        }
+        .crossMidnightTick { nowTick = Date() }
         .writeErrorAlert($writeError)
     }
 

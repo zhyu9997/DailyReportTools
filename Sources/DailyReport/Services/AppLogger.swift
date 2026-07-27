@@ -9,8 +9,16 @@ import os
 enum AppLogger {
     private static let subsystem = "com.zhyu.dailyreport"
     private static let osLogger = Logger(subsystem: subsystem, category: "app")
+    private static let faultLogger = Logger(subsystem: subsystem, category: "logger-fault")
     private static let maxBytes: Int64 = 1 * 1024 * 1024
     private static let keepCount = 5
+
+    /// 文件写失败已反馈过 os.Logger 的标志。
+    /// R25-D：原版 write 路径 6 处 `try?` 在磁盘满 / 只读 / 权限不足时静默丢日志，
+    /// 用户拿到的 app.log 可能是空的，但开发者毫不知情。
+    /// 改为：首次写失败时通过 os.Logger.fault 兜底打一条（仅一次，避免后续每次写都重复 fault 撑爆日志）
+    /// nonisolated(unsafe)：仅在本类的 writeLock 持锁范围内读写，编译期无法证明，需手动约束
+    private nonisolated(unsafe) static var didLogWriteFailure = false
 
     /// 日志目录：app 同级 `logs/`（thread-safe lazy init，仅创建一次）
     private static let logDirectory: URL = {
@@ -96,17 +104,27 @@ enum AppLogger {
         guard let data = line.data(using: .utf8) else { return }
         let url = logFileURL
         let fm = FileManager.default
+        var writeError: Error?
         if fm.fileExists(atPath: url.path) {
             rollIfNeeded(url: url, maxBytes: maxBytes, keepCount: keepCount)
-            if let handle = try? FileHandle(forWritingTo: url) {
+            do {
+                let handle = try FileHandle(forWritingTo: url)
                 defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: data)
-            } else {
-                try? data.write(to: url, options: .atomic)
+                try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            } catch {
+                // append 路径失败（被占用 / 权限）→ 兜底整体覆盖
+                do { try data.write(to: url, options: .atomic) }
+                catch { writeError = error }
             }
         } else {
-            try? data.write(to: url, options: .atomic)
+            do { try data.write(to: url, options: .atomic) }
+            catch { writeError = error }
+        }
+        // R25-D：首次失败时通过独立 category 打 fault，避免诊断盲区
+        if let err = writeError, !didLogWriteFailure {
+            didLogWriteFailure = true
+            faultLogger.fault("📝 AppLogger 文件写失败 path=\(url.path, privacy: .public) err=\(err.localizedDescription, privacy: .public)。后续日志仅出现在 os.Logger，app.log 可能空白。请检查磁盘空间/权限。")
         }
     }
 

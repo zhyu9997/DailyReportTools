@@ -17,7 +17,95 @@ import GRDB
         return AppStore(dbQueue: queue)
     }
 
-    // MARK: - sweepMeetings
+    // MARK: - sweepMeetings.cleanupExpiry（R25-F：旧版「克隆+降级」残留清理回归）
+    // 基础分支（清理 7+ 天前空副本 / 保留 7 天内新建）已由 sweepPurgesOldSameTopicResidual
+    // 与 sweepKeepsRecentSameTopicOneShot 通过 sweepAll 覆盖。下面补两个未被覆盖的保留分支。
+
+    /// 同主题、7+ 天前、但 summary 非空 → 保留（用户写了内容）
+    @Test func cleanupPreservesOldSameTopicCopyWithSummary() async throws {
+        let store = try Self.makeStore()
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: Date())
+        let oldCreated = startOfToday.addingTimeInterval(-.week).addingTimeInterval(-86400)
+
+        var recurringDraft = NewMeeting(
+            topic: "评审会", summary: "",
+            timestamp: startOfToday,
+            isRecurring: true, recurrenceUnit: .weekly, recurrenceInterval: 1,
+            recurrenceWeekdays: [3], recurrenceMonthDays: [],
+            tagIds: [], reviews: []
+        )
+        recurringDraft.createdAt = oldCreated
+        _ = try store.insertMeeting(recurringDraft)
+
+        var withSummary = NewMeeting(
+            topic: "评审会", summary: "用户写的内容",
+            timestamp: oldCreated,
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            tagIds: [], reviews: []
+        )
+        withSummary.createdAt = oldCreated
+        _ = try store.insertMeeting(withSummary)
+        let withSummaryId = withSummary.id
+
+        try store.transactional { db in
+            try RecurrenceService.sweepMeetings(
+                db: db,
+                meetings: store.meetings,
+                recurringTopics: Set(store.meetings.filter { $0.isRecurring }.map { $0.topic }),
+                reviewsByMeeting: store.reviewsByMeeting,
+                startOfToday: startOfToday)
+        }
+
+        #expect(store.meetings.first { $0.id == withSummaryId } != nil,
+                "summary 非空的副本应保留")
+    }
+
+    /// 同主题、7+ 天前、空 summary、但有 review → 保留（评审数据不能丢）
+    @Test func cleanupPreservesOldSameTopicCopyWithReview() async throws {
+        let store = try Self.makeStore()
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: Date())
+        let oldCreated = startOfToday.addingTimeInterval(-.week).addingTimeInterval(-86400)
+
+        var recurringDraft = NewMeeting(
+            topic: "需求评审", summary: "",
+            timestamp: startOfToday,
+            isRecurring: true, recurrenceUnit: .weekly, recurrenceInterval: 1,
+            recurrenceWeekdays: [5], recurrenceMonthDays: [],
+            tagIds: [], reviews: []
+        )
+        recurringDraft.createdAt = oldCreated
+        _ = try store.insertMeeting(recurringDraft)
+
+        var withReview = NewMeeting(
+            topic: "需求评审", summary: "",
+            timestamp: oldCreated,
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            tagIds: [],
+            reviews: [NewReview(reviewer: "张三", opinion: "同意")]
+        )
+        withReview.createdAt = oldCreated
+        _ = try store.insertMeeting(withReview)
+        let withReviewId = withReview.id
+
+        try store.transactional { db in
+            try RecurrenceService.sweepMeetings(
+                db: db,
+                meetings: store.meetings,
+                recurringTopics: Set(store.meetings.filter { $0.isRecurring }.map { $0.topic }),
+                reviewsByMeeting: store.reviewsByMeeting,
+                startOfToday: startOfToday)
+        }
+
+        #expect(store.meetings.first { $0.id == withReviewId } != nil,
+                "带 review 的副本应保留")
+        #expect((store.reviewsByMeeting[withReviewId] ?? []).count == 1)
+    }
+
+    // MARK: - sweepMeetings 经典推进分支
 
     @Test func sweepAdvancesOverdueRecurring() async throws {
         let store = try Self.makeStore()

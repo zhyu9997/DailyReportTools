@@ -46,7 +46,9 @@ enum RecurrenceService {
     ///    按天判断（不计较具体时刻）：今天的周期性会议无论时间是否已过，都留在今日会议里。
     ///    推进目标也按天算（from startOfToday），确保"下一期就是今天"时落在今天而非跳到明天。
     /// 2) 一次性清理旧版「克隆+降级」逻辑残留的空副本（同主题、无内容、非周期）
-    private static func sweepMeetings(db: Database,
+    ///
+    /// R25-F：从 private 改 internal 以便单测覆盖 cleanup 分支（曾发生「7 天相对窗口误删同名一次性会议」回归）
+    static func sweepMeetings(db: Database,
                                        meetings: [MeetingRecord],
                                        recurringTopics: Set<String>,
                                        reviewsByMeeting: [UUID: [ReviewRecord]],

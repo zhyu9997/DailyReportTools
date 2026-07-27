@@ -190,15 +190,15 @@ struct TodayView: View {
             .writeErrorAlert($writeError)
         }
         .task { await loadReport() }
-        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
-            nowTick = Date()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
-            // 跨午夜后：今天的 report 可能尚未创建，或本地缓存的还是昨天的；重新拉取
-            nowTick = Date()
-            report = nil
-            Task { await loadReport() }
-        }
+        .crossMidnightTick(
+            onTick: { nowTick = Date() },
+            onDayChange: {
+                // 跨午夜后：今天的 report 可能尚未创建，或本地缓存的还是昨天的；重新拉取
+                nowTick = Date()
+                report = nil
+                Task { await loadReport() }
+            }
+        )
         // 标签被外部删除时，selectedTag 失效要立即自清，避免计划列表/标签筛选静默归零
         // 用 [UUID] 而非 [TagRecord]：onChange 需要 Equatable，UUID 满足而 TagRecord 没法 conform
         .onChange(of: store?.tags.map(\.id) ?? []) { _, newIds in

@@ -135,14 +135,9 @@ struct HistoryView: View {
             }
             .navigationTitle("时间线")
             .searchable(text: $searchText, placement: .toolbar, prompt: "搜索标题、详情、会议主题")
-            // 「今天 / 昨天 / 明天」分组依赖当前时间，每分钟刷新一次即可（个人工具，CPU 可忽略）
-            .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
-                nowTick = Date()
-            }
-            // Timer 60s 间隔在午夜整点后可能延迟近一小时才触发；监听系统跨日广播立即刷新
-            .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
-                nowTick = Date()
-            }
+            // 「今天 / 昨天 / 明天」分组依赖当前时间；Timer 60s 覆盖分钟边界，
+            // NSCalendarDayChanged 兜底覆盖午夜整点后的延迟（R25-E：抽到 crossMidnightTick）
+            .crossMidnightTick { nowTick = Date() }
             // 搜索时强制展开所有折叠分组，否则结果躺在折叠组里用户看不到（分组头计数却显示）
             .onChange(of: searchText) { _, newValue in
                 if !newValue.isBlank {
@@ -295,69 +290,44 @@ struct HistoryView: View {
 
     @ViewBuilder
     private func prioritySection(_ p: Priority, items: [BoardItem]) -> some View {
-        let collapsed = collapsedPriorities.contains(p)
-        let isTarget = dropTargetPriority == p
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
+        collapsiblePrioritySection(
+            priority: p,
+            count: items.count,
+            isCollapsed: collapsedPriorities.contains(p),
+            onToggle: {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    if collapsed { collapsedPriorities.remove(p) }
+                    if collapsedPriorities.contains(p) { collapsedPriorities.remove(p) }
                     else { collapsedPriorities.insert(p) }
                 }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "flag.fill")
-                        .foregroundStyle(p.swiftUIColor)
-                        .font(.caption)
-                    Text("\(p.localizedName)优先级")
-                        .font(.caption.weight(.semibold))
-                    Text("\(items.count)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(p.swiftUIColor)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(p.swiftUIColor.opacity(0.15))
-                        .clipShape(Capsule())
-                    Spacer()
+            },
+            isDropTarget: dropTargetPriority == p,
+            onDrop: { dropped in
+                guard let str = dropped.first, let id = UUID(uuidString: str),
+                      let target = allEntries.first(where: { $0.id == id }) else { return false }
+                // 拖到某优先级组：归入计划列 + 设为该优先级（跨 kind 时清对方专属字段）
+                return writeForDrop {
+                    try $0.updateEntry(target.id, mutations: Self.convertKind(to: .planned) { $0.priority = p })
                 }
-                .padding(.horizontal, 4)
-                .contentShape(Rectangle())
+            },
+            onTargetingChange: { targeting in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    dropTargetPriority = (targeting == true) ? p : nil
+                }
             }
-            .buttonStyle(.plain)
-
-            if !collapsed {
-                if items.isEmpty {
-                    Text("拖任务到这里设为「\(p.localizedName)」")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                } else {
-                    VStack(spacing: 8) {
-                        ForEach(items) { item in
-                            boardCard(item)
-                        }
+        ) {
+            if items.isEmpty {
+                Text("拖任务到这里设为「\(p.localizedName)」")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(items) { item in
+                        boardCard(item)
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-            }
-        }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 8)
-            .fill(isTarget ? p.swiftUIColor.opacity(0.18) : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(isTarget ? p.swiftUIColor.opacity(0.7) : Color.clear, lineWidth: 2))
-        .dropDestination(for: String.self) { dropped, _ in
-            guard let str = dropped.first, let id = UUID(uuidString: str),
-                  let target = allEntries.first(where: { $0.id == id }) else { return false }
-            // 拖到某优先级组：归入计划列 + 设为该优先级（跨 kind 时清对方专属字段）
-            return writeForDrop {
-                try $0.updateEntry(target.id, mutations: Self.convertKind(to: .planned) { $0.priority = p })
-            }
-        } isTargeted: { targeting in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                dropTargetPriority = (targeting == true) ? p : nil
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -376,72 +346,47 @@ struct HistoryView: View {
 
     @ViewBuilder
     private func blockerPrioritySection(_ p: Priority, items: [BoardItem]) -> some View {
-        let collapsed = collapsedBlockerPriorities.contains(p)
-        let isTarget = dropTargetBlockerPriority == p
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
+        collapsiblePrioritySection(
+            priority: p,
+            count: items.count,
+            isCollapsed: collapsedBlockerPriorities.contains(p),
+            onToggle: {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    if collapsed { collapsedBlockerPriorities.remove(p) }
+                    if collapsedBlockerPriorities.contains(p) { collapsedBlockerPriorities.remove(p) }
                     else { collapsedBlockerPriorities.insert(p) }
                 }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Image(systemName: "flag.fill")
-                        .foregroundStyle(p.swiftUIColor)
-                        .font(.caption)
-                    Text("\(p.localizedName)优先级")
-                        .font(.caption.weight(.semibold))
-                    Text("\(items.count)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(p.swiftUIColor)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(p.swiftUIColor.opacity(0.15))
-                        .clipShape(Capsule())
-                    Spacer()
+            },
+            isDropTarget: dropTargetBlockerPriority == p,
+            onDrop: { dropped in
+                guard let str = dropped.first, let id = UUID(uuidString: str),
+                      let target = allEntries.first(where: { $0.id == id }) else { return false }
+                // 拖到某优先级组：归入问题列 + 设为该优先级（跨 kind 时清对方专属字段）
+                return writeForDrop {
+                    try $0.updateEntry(target.id, mutations: Self.convertKind(to: .blocker) { $0.priority = p })
                 }
-                .padding(.horizontal, 4)
-                .contentShape(Rectangle())
+            },
+            onTargetingChange: { targeting in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    dropTargetBlockerPriority = (targeting == true) ? p : nil
+                }
             }
-            .buttonStyle(.plain)
-
-            if !collapsed {
-                if items.isEmpty {
-                    Text("拖任务到这里设为「\(p.localizedName)」优先级的问题")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach([BlockerStatus.ongoing, .monitor, .closed]) { s in
-                            let subgroup = items.filter { statusOf($0) == s }
-                            if !subgroup.isEmpty {
-                                blockerStatusSubSection(s, priority: p, items: subgroup)
-                            }
+        ) {
+            if items.isEmpty {
+                Text("拖任务到这里设为「\(p.localizedName)」优先级的问题")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach([BlockerStatus.ongoing, .monitor, .closed]) { s in
+                        let subgroup = items.filter { statusOf($0) == s }
+                        if !subgroup.isEmpty {
+                            blockerStatusSubSection(s, priority: p, items: subgroup)
                         }
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
-            }
-        }
-        .padding(6)
-        .background(RoundedRectangle(cornerRadius: 8)
-            .fill(isTarget ? p.swiftUIColor.opacity(0.18) : Color.clear))
-        .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(isTarget ? p.swiftUIColor.opacity(0.7) : Color.clear, lineWidth: 2))
-        .dropDestination(for: String.self) { dropped, _ in
-            guard let str = dropped.first, let id = UUID(uuidString: str),
-                  let target = allEntries.first(where: { $0.id == id }) else { return false }
-            // 拖到某优先级组：归入问题列 + 设为该优先级（跨 kind 时清对方专属字段）
-            return writeForDrop {
-                try $0.updateEntry(target.id, mutations: Self.convertKind(to: .blocker) { $0.priority = p })
-            }
-        } isTargeted: { targeting in
-            withAnimation(.easeInOut(duration: 0.15)) {
-                dropTargetBlockerPriority = (targeting == true) ? p : nil
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
