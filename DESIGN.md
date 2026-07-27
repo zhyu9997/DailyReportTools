@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，525 tests / 56 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，550 tests / 60 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，525 tests / 56 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，550 tests / 60 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1087,6 +1087,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `BackupFilenameTests` | 6 | BackupService.backupFilename 文件名拼接：两段式 `<prefix>-<stamp>.json`（boot/manual/salvage 无 suffix）/ 三段式 `<prefix>-<stamp>-<suffix>.json`（weekly 含 weekKey）/ 必须以 .json 结尾 / 段间用「-」分隔（禁用「_」/「.」会破坏 enumerateBackups 的 dropLast 解析）/ 空字符串 suffix 边界（仍走三段式路径末尾多个「-」）（R47-B，原内联在 writeBackup 零覆盖，抽 `static func backupFilename(prefix:stamp:suffix:)`） |
 | `ShiftWeekTests` | 6 | WeeklyReportView.shift 周翻页：+1/+2 向前推 / -1 向后退 / 0 兜底不动 / 跨月（1 月底→2 月初）/ 跨年（12 月→次年 1 月）/ 0 偏移返回等价日期（R47-C，原 private 实例方法零覆盖，抽 `static func shift(anchor:by:)`；delta 符号反会让「上一周」按钮跳到下一周） |
 | `EntryDraftMappingTests` | 8 | WorkEntryCard.syncDraft/applyDraft 字段对称契约：syncDraft 全字段拷贝（12 字段映射 + recurrenceWeekdays 数组）/ nil finishDate 兜底为 ~Date()（让 planned 编辑面板有默认日期可选）/ nil helper 兜底为空串（让 TextField 显示空而非 nil）/ applyDraft done 路径写 finishDate 不写 helper / blocker 路径写 helper+blockerStatus 不写 finishDate / 纯空格 helper trim 后存 nil（防导出脏数据）/ planned 路径保留所有 recurrence 字段 / title 走 trim（R47-D，引入 `EntryDraft` struct 让两端字段集可断言，原两个 private 实例方法零覆盖；注释明确「新增字段必须同时改 syncDraft + applyDraft 两处」但无测试钉死） |
+| `WeekMarkdownTests` | 5 | ExportService.weekMarkdown 周报 Markdown 拼装：空 days 仅返回标题 `# ...\n\n` / 标题原样注入不 trim/escape / 单日末尾跟 `---\n\n` 分隔符 / 多日各跟一个分隔符（计数 = days，不是只在中间加）/ 日内 entry 标题透传到周报（R48-A，原内联在 exportWeek 的 5 行字符串拼接绑死 NSSavePanel 零覆盖，抽 `static func weekMarkdown(_:title:) -> String`） |
+| `TodosCSVBodyTests` | 6 | ExportService.todosCSVBody 全 Todo→CSV 文本：空输入仅返回表头一行 / 表头 6 列固定顺序（标题/是否完成/截止日期/创建时间/完成时间/标签）/ 单 todo 追加一行 / 多 todo 按传入顺序拼接不重排 / tagsByTodo 映射的 tag 数组用「/」拼接 / todo 在映射缺失时最后一列显空串兜底（非 "nil" 字面量）（R48-B，原内联在 exportTodosCSV 的表头 + 循环拼行绑死 NSSavePanel 零覆盖，抽 `static func todosCSVBody(_:tagsByTodo:) -> String`） |
+| `CleanReviewDraftsTests` | 7 | MeetingFormView.cleanReviewDrafts 评审草稿清洗：空输入返空 / 全部 reviewer+opinion 双空（含纯空格）全过滤 / 仅 reviewer 有效保留 / 仅 opinion 有效保留 / 两字段都 trim 防脏数据 / filter 后 enumerated 重排 order 顺序 0,1,2...（防跳号）（R48-C，原内联在 save() 的 5 步链式 map→filter→enumerated→map 零覆盖，抽 `static func cleanReviewDrafts(_:) -> [NewReview]`；与 MeetingCard.validReviews 必须语义对称，否则表单保存数与卡片显示数分叉） |
+| `MeetingBelongsToColumnTests` | 7 | HistoryView.meetingBelongsToColumn 会议→看板列归属：周期性会议永不进看板（仅作模板）/ 未来会议属 planned 列 / 未来会议不属于 done 列 / 过去会议属 done 列 / 过去会议不属于 planned 列 / blocker 列永不收会议（不管未来过去）/ 边界 timestamp==now 走 done（`m.timestamp > now` false，已开始）（R48-D，原内联在 columnItems 的 compactMap 闭包 4 行 if 链零覆盖，抽 `static func meetingBelongsToColumn(_:kind:now:) -> Bool`） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1165,6 +1169,11 @@ R47-A 新建 `EntriesXLSXRowsTests` 6 用例（ExportService.entriesXLSXRows 全
 R47-B 新建 `BackupFilenameTests` 6 用例（BackupService.backupFilename 文件名拼接），BackupFilenameTests 用例数 0 → 6。原内联在 `writeBackup` 零覆盖，抽 `static func backupFilename(prefix:stamp:suffix:) -> String`。覆盖两段式（boot/manual 无 suffix）/ 三段式（weekly 含 weekKey suffix）/ .json 后缀 / 「-」分隔符契约（enumerateBackups 的 hasPrefix + dropLast 解析依赖）。`@MainActor` 标注匹配 BackupService 主线程隔离。改坏会让 weekly 去重失效（hasPrefix 不匹配导致磁盘堆积）或文件名含特殊字符让 fs 操作失败。
 R47-C 新建 `ShiftWeekTests` 6 用例（WeeklyReportView.shift 周翻页），ShiftWeekTests 用例数 0 → 6。原 private 实例方法零覆盖，抽 `static func shift(anchor:by:) -> Date`（含 `?? anchor` 兜底）。覆盖方向（+/- delta）+ 跨月跨年边界 + 0 兜底不动。改坏会让「上一周」按钮跳到下一周（delta 符号反）或极端日历 crash（去掉 ?? 强解包）。
 R47-D 新建 `EntryDraftMappingTests` 8 用例（WorkEntryCard.syncDraft/applyDraft 字段对称契约），EntryDraftMappingTests 用例数 0 → 8。引入 `EntryDraft` struct（12 字段）让两端字段集可断言。抽 `static func syncDraft(from:tags:) -> EntryDraft` + `static func applyDraft(_:to:)`。覆盖 syncDraft 全字段拷贝 + nil 兜底（finishDate→Date() / helper→空串）/ applyDraft kind 三分支分流（done 写 finishDate / blocker 写 helper+status / planned 写 recurrence）/ 纯空格 helper trim 后存 nil（防导出脏数据）/ title 走 trim。改坏会产生「周期性 blocker」怪胎（清 recurrence 漏）或 helper 存成空字符串而非 nil。
+
+R48-A 新建 `WeekMarkdownTests` 5 用例（ExportService.weekMarkdown 周报 Markdown 拼装），WeekMarkdownTests 用例数 0 → 5。原内联在 `exportWeek` 的 5 行字符串拼接绑死 NSSavePanel 零覆盖，抽 `static func weekMarkdown(_ days:, title:) -> String`。覆盖空 days 仅返回标题 / 标题原样注入（trim/escape 都不允许）/ 单日跟分隔符 / 多日各跟一个分隔符（计数 = days）/ 日内 entry 标题透传到周报。改坏会让周报丢首行标题或每天挤在一起没分隔，下游粘贴阅读体验崩。
+R48-B 新建 `TodosCSVBodyTests` 6 用例（ExportService.todosCSVBody 全 Todo→CSV 文本），TodosCSVBodyTests 用例数 0 → 6。原内联在 `exportTodosCSV` 的表头 + 循环拼行绑死 NSSavePanel 零覆盖，抽 `static func todosCSVBody(_ todos:, tagsByTodo:) -> String`。覆盖空输入仅表头 / 表头 6 列顺序契约 / 单行追加 / 多行顺序 / tags「/」拼接 / 缺失映射空串兜底。改坏会让 Excel 打开 CSV 列错位或显示 "nil" 字面量。
+R48-C 新建 `CleanReviewDraftsTests` 7 用例（MeetingFormView.cleanReviewDrafts 评审草稿清洗），CleanReviewDraftsTests 用例数 0 → 7。原内联在 `save()` 的 5 步链式 map→filter→enumerated→map 零覆盖，抽 `static func cleanReviewDrafts(_ drafts:) -> [NewReview]`。覆盖空输入 / 全空过滤 / 仅 reviewer 保留 / 仅 opinion 保留 / 两字段 trim / filter 后 order 重排。改坏会让空评审被持久化或 order 跳号错乱（与 MeetingCard.validReviews 必须语义对称）。
+R48-D 新建 `MeetingBelongsToColumnTests` 7 用例（HistoryView.meetingBelongsToColumn 会议→看板列归属），MeetingBelongsToColumnTests 用例数 0 → 7。原内联在 `columnItems` 的 compactMap 闭包 4 行 if 链零覆盖，抽 `static func meetingBelongsToColumn(_ m:, kind:, now:) -> Bool`。覆盖周期性 false / 未来→planned / 未来不属于 done / 过去→done / 过去不属于 planned / blocker 列永不收 / timestamp==now 边界。改坏会让已结束会议赖在「计划」列挡视线或未来会议污染「完成」列。
 
 ### 14.2 测试模式约定
 

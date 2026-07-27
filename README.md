@@ -50,7 +50,7 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**525 tests / 56 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**550 tests / 60 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
@@ -93,6 +93,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `BackupFilenameTests` (6) | BackupService.backupFilename 文件名拼接：两段式（boot/manual 无 suffix）/ 三段式（weekly 含 weekKey）/ .json 后缀 / 「-」分隔符 / 空字符串 suffix 边界（R47-B，原内联在 writeBackup 零覆盖，enumerateBackups 解析依赖此格式契约） |
 | `ShiftWeekTests` (6) | WeeklyReportView.shift 周翻页：+1/+2 向前 / -1 向后 / 0 兜底不动 / 跨月 / 跨年 / 等价日期返回（R47-C，原 private 实例方法零覆盖） |
 | `EntryDraftMappingTests` (8) | WorkEntryCard.syncDraft/applyDraft 字段对称契约：syncDraft 全字段拷贝 / nil finishDate 兜底 Date() / nil helper 兜底空串 / applyDraft done 写 finishDate / blocker 写 helper+status / 空格 helper 存 nil / planned 保留 recurrence / title trim（R47-D，引入 EntryDraft struct 让两端字段集可断言，原两个 private 实例方法零覆盖） |
+| `WeekMarkdownTests` (5) | ExportService.weekMarkdown 周报 Markdown 拼装：空 days 仅标题 / 标题原样注入（不 trim/escape）/ 单日跟分隔符 / 多日各跟分隔符（计数 = days）/ 日内内容透传（R48-A，原内联在 exportWeek 绑死 NSSavePanel 零覆盖） |
+| `TodosCSVBodyTests` (6) | ExportService.todosCSVBody 全 Todo→CSV 文本：空输入仅表头 / 表头 6 列顺序 / 单行追加 / 多行顺序 / tags 用「/」拼接 / 缺失映射空串兜底（R48-B，原内联在 exportTodosCSV 零覆盖） |
+| `CleanReviewDraftsTests` (7) | MeetingFormView.cleanReviewDrafts 评审草稿清洗：空输入 / 全空过滤 / 仅 reviewer 保留 / 仅 opinion 保留 / trim 两字段 / filter 后 order 顺序重排（防跳号）（R48-C，原内联在 save() 5 步链零覆盖） |
+| `MeetingBelongsToColumnTests` (7) | HistoryView.meetingBelongsToColumn 会议→看板列归属：周期性 false / 未来→planned / 过去→done / 跨列互斥 / blocker 列永不收 / timestamp==now 走 done（R48-D，原内联在 columnItems compactMap 零覆盖） |
 
 View 层不测（SwiftUI 视图组合靠人工验证）。
 
@@ -133,7 +137,7 @@ Sources/DailyReport/
 ├── Views/                  # 概要 / 时间线 / 会议 / 周报 / 设置 / 菜单栏面板
 ├── Components/             # 复用组件（InlineSummaryEditor、TagPicker、KindPicker、RecurrenceEditor、WriteErrorAlert…）
 └── Services/               # 备份 / 导出 / 周期推进 / 提醒 / 日志
-Tests/DailyReportTests/      # 525 tests / 56 suites（详见 DESIGN.md §14）
+Tests/DailyReportTests/      # 550 tests / 60 suites（详见 DESIGN.md §14）
 scripts/build-app.sh         # 构建 + 打包（纯 CLT）
 Resources/Info.plist.template
 ```

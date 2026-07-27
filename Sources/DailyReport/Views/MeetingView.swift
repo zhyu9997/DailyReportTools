@@ -270,6 +270,17 @@ struct MeetingFormView: View {
         drafts.filter { !$0.reviewer.isBlank || !$0.opinion.isBlank }.count
     }
 
+    /// 评审草稿清洗的纯函数核心：trim 两字段 → 丢弃双空占位行 → enumerated 重排 order。
+    /// R48-C：从 save() 抽 static 让单测可覆盖 trim/filter/order 三段语义。
+    /// 改坏会让空评审被持久化（"评审（3）" 但实际全空）或顺序错乱（order 跳号或重复）
+    static func cleanReviewDrafts(_ drafts: [ReviewDraft]) -> [NewReview] {
+        drafts
+            .map { ReviewDraft(reviewer: $0.reviewer.trimmed, opinion: $0.opinion.trimmed) }
+            .filter { !$0.reviewer.isEmpty || !$0.opinion.isEmpty }
+            .enumerated()
+            .map { (idx, d) in NewReview(reviewer: d.reviewer, opinion: d.opinion, order: idx) }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -418,14 +429,8 @@ struct MeetingFormView: View {
         let t = topic.trimmed
         guard !t.isEmpty else { return }
 
-        // 清洗评审 drafts
-        let cleaned = reviewDrafts
-            .map { ReviewDraft(
-                reviewer: $0.reviewer.trimmed,
-                opinion: $0.opinion.trimmed) }
-            .filter { !$0.reviewer.isEmpty || !$0.opinion.isEmpty }
-            .enumerated()
-            .map { (idx, d) in NewReview(reviewer: d.reviewer, opinion: d.opinion, order: idx) }
+        // 清洗评审 drafts（trim 双字段 → 丢弃双空占位行 → 重排 order）
+        let cleaned = Self.cleanReviewDrafts(reviewDrafts)
 
         do {
             if let m = meeting {

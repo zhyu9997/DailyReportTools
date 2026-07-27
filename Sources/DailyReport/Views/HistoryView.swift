@@ -101,12 +101,7 @@ struct HistoryView: View {
                     return nil
                 }
                 if !matchesSearch(m) { return nil }
-                // 周期性会议不进看板（仅作模板，由 sweep 生成具体实例后再显示）
-                if m.isRecurring { return nil }
-                let isFuture = m.timestamp > now
-                if kind == .planned && isFuture { return .meeting(m) }
-                if kind == .done && !isFuture { return .meeting(m) }
-                return nil
+                return Self.meetingBelongsToColumn(m, kind: kind, now: now) ? .meeting(m) : nil
             }
             items.append(contentsOf: meetingItems)
         }
@@ -146,6 +141,18 @@ struct HistoryView: View {
         case .entry(let e): return e.blockerStatus
         case .meeting: return .ongoing
         }
+    }
+
+    /// 会议是否归属指定列的纯函数判定：周期性会议永远是 false（仅作模板不进看板），
+    /// 未来会议 → planned 列；过去会议 → done 列；problem 列不接受会议。
+    /// R48-D：从 columnItems 内联分支抽 static，让单测可钉死三段判定契约。
+    /// 改坏会让已结束会议赖在「计划」列挡视线，或未来会议污染「完成」列
+    static func meetingBelongsToColumn(_ m: MeetingRecord, kind: WorkKind, now: Date) -> Bool {
+        if m.isRecurring { return false }
+        let isFuture = m.timestamp > now
+        if kind == .planned && isFuture { return true }
+        if kind == .done && !isFuture { return true }
+        return false
     }
 
     var body: some View {

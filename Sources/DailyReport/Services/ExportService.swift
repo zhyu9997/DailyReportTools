@@ -22,12 +22,19 @@ final class ExportService {
     }
 
     func exportWeek(_ days: [DayData], title: String, filename: String) throws {
+        try save(filename: filename, content: Self.weekMarkdown(days, title: title))
+    }
+
+    /// 周报 Markdown 拼装的纯函数核心：标题 `# ...` + 每日 markdownForDay + `---\n\n` 分隔符。
+    /// R48-A：从 exportWeek 抽 static，让单测可覆盖格式契约（标题/分隔符/空 days 边界）。
+    /// 改坏会让周报丢首行标题或每天挤在一起没分隔，影响下游粘贴阅读
+    static func weekMarkdown(_ days: [DayData], title: String) -> String {
         var s = "# \(title)\n\n"
         for d in days {
-            s += Self.markdownForDay(d)
+            s += markdownForDay(d)
             s += "---\n\n"
         }
-        try save(filename: filename, content: s)
+        return s
     }
 
     /// 周报 XLSX：仅「完成」任务，按实际完成日（归属日）排序、带「星期」列
@@ -81,14 +88,22 @@ final class ExportService {
     }
 
     func exportTodosCSV(_ todos: [TodoItemRecord], tagsByTodo: [UUID: [TagRecord]]) throws {
+        try save(filename: "待办-\(Date().isoDay).csv",
+                 content: Self.todosCSVBody(todos, tagsByTodo: tagsByTodo))
+    }
+
+    /// 全部 Todo → CSV 文本的纯函数核心：固定表头 + 循环调用 todoCSVRow。
+    /// R48-B：从 exportTodosCSV 抽 static，让单测可覆盖表头契约 + 行数 + 多标签拼接顺序。
+    /// 改坏会让 CSV 缺表头（Excel 打开错位）或行重复/漏空标签兜底
+    static func todosCSVBody(_ todos: [TodoItemRecord], tagsByTodo: [UUID: [TagRecord]]) -> String {
         var csv = "标题,是否完成,截止日期,创建时间,完成时间,标签\n"
         for t in todos {
             let tags = (tagsByTodo[t.id] ?? []).map(\.name).joined(separator: "/")
-            csv += Self.todoCSVRow(title: t.title, isDone: t.isDone,
-                                   dueDate: t.dueDate, completedAt: t.completedAt,
-                                   createdAt: t.createdAt, tags: tags)
+            csv += todoCSVRow(title: t.title, isDone: t.isDone,
+                              dueDate: t.dueDate, completedAt: t.completedAt,
+                              createdAt: t.createdAt, tags: tags)
         }
-        try save(filename: "待办-\(Date().isoDay).csv", content: csv)
+        return csv
     }
 
     /// 单条 Todo → CSV 行（不含末尾换行）。
