@@ -63,7 +63,6 @@ struct TagRecord: FetchableRecord, MutablePersistableRecord, Identifiable {
     var colorHex: String
     var createdAt: Date
 
-    static let persistenceKey = Column("id")
 
     init(row: Row) throws {
         id = row["id"]
@@ -93,7 +92,6 @@ struct DailyReportRecord: FetchableRecord, MutablePersistableRecord, Identifiabl
     var createdAt: Date
     var updatedAt: Date
 
-    static let persistenceKey = Column("id")
 
     init(row: Row) throws {
         id = row["id"]
@@ -128,7 +126,6 @@ struct TodoItemRecord: FetchableRecord, MutablePersistableRecord, Identifiable {
     var createdAt: Date
     var completedAt: Date?
 
-    static let persistenceKey = Column("id")
 
     init(row: Row) throws {
         id = row["id"]
@@ -183,7 +180,6 @@ struct WorkEntryRecord: FetchableRecord, MutablePersistableRecord, Identifiable,
     var recurrenceMonthDays: [Int]
     var createdAt: Date
 
-    static let persistenceKey = Column("id")
 
     init(row: Row) throws {
         id = row["id"]
@@ -270,6 +266,30 @@ struct WorkEntryRecord: FetchableRecord, MutablePersistableRecord, Identifiable,
                                   monthDays: recurrenceMonthDays,
                                   after: finishDate ?? Date()) ?? Date()
     }
+
+    /// 构造「下一期」克隆（仅 isRecurring=true 且 kind=.planned 时有意义，否则返回 nil）。
+    /// R29-E 抽出：原版 AppStore.markEntryDone 内 17 行字段逐项 init 与主流程混杂；
+    /// 提到 record 自身让 markEntryDone 主流程只关心「是否克隆 + 复制关系 + 原地降级」
+    func spawnNext() -> WorkEntryRecord? {
+        guard isRecurring, kind == .planned else { return nil }
+        return WorkEntryRecord(
+            id: UUID(),
+            title: title,
+            detail: detail,
+            timestamp: Date(),
+            kindRaw: WorkKind.planned.rawValue,
+            finishDate: nextRecurrenceDate(),
+            helper: nil,
+            blockerStatusRaw: BlockerStatus.ongoing.rawValue,
+            priorityRaw: priorityRaw,
+            isRecurring: true,
+            recurrenceUnitRaw: recurrenceUnitRaw,
+            recurrenceInterval: recurrenceInterval,
+            recurrenceWeekdays: recurrenceWeekdays,
+            recurrenceMonthDays: recurrenceMonthDays,
+            createdAt: Date()
+        )
+    }
 }
 
 struct MeetingRecord: FetchableRecord, MutablePersistableRecord, Identifiable, RecurrenceCapable {
@@ -285,7 +305,6 @@ struct MeetingRecord: FetchableRecord, MutablePersistableRecord, Identifiable, R
     var recurrenceWeekdays: [Int]
     var recurrenceMonthDays: [Int]
 
-    static let persistenceKey = Column("id")
 
     init(row: Row) throws {
         id = row["id"]
@@ -351,7 +370,6 @@ struct ReviewRecord: FetchableRecord, MutablePersistableRecord, Identifiable {
     var createdAt: Date
     var meetingId: UUID?
 
-    static let persistenceKey = Column("id")
 
     init(row: Row) throws {
         id = row["id"]

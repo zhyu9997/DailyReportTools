@@ -202,6 +202,17 @@ import Foundation
         #expect(next! == base)
     }
 
+    // R29-D：base 在未来 + interval>1 的组合。daily 分支顶部 `if base > now { return base }`
+    // 直接返回 base 不论 interval，是正确行为但原版无锚定。改算法（如把 interval 检查提前）会回归
+    @Test func dailyBaseInFutureWithIntervalReturnsBaseRegardless() {
+        let base = Self.makeDate(2026, 7, 26, 9, 0)
+        let now = Self.makeDate(2026, 7, 26, 8, 0)
+        let next = Recurrence.nextFutureDate(unit: .daily, interval: 2, weekdays: [], monthDays: [],
+                                              after: base, now: now)
+        #expect(next != nil)
+        #expect(next! == base)
+    }
+
     // MARK: - Label
 
     @Test func labelDaily() {

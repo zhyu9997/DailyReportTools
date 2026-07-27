@@ -3,6 +3,44 @@ import GRDB
 
 /// 数据库迁移注册表
 enum AppMigrator {
+
+    /// v2/v4 共享：把 orphan 行在 tag 中间表的残留关系迁移到 keeper（INSERT OR IGNORE 防复合主键冲突），
+    /// 再显式删除 orphan 的残留关系。
+    /// R29-C 抽出：v2 在 daily_report dedup 时调用 1 次（orphan=report），v4 在 tag dedup 时调用 4 次（orphan=tag，
+    /// 4 张中间表全过）。原版 8 段 SQL 几乎逐字重复。
+    /// - Parameters:
+    ///   - link: 中间表标识（包含表名 + 列名）
+    ///   - orphanIsTag: orphan 是 tag 端（v4 模式）还是 entity 端（v2 模式）
+    ///   - keepId: 关系被并入的 keeper 行的 id 字符串
+    ///   - orphanIds: 待清理的 orphan 行的 id 字符串数组
+    private static func migrateTagLinks(_ db: Database,
+                                        link: RecordQueries.TagLinkTable,
+                                        orphanIsTag: Bool,
+                                        keepId: String,
+                                        orphanIds: [String]) throws {
+        let entityCol = link.ownerColumn
+        let tagCol = "tagId"
+        // INSERT SELECT 中 tagCol 与 entityCol 的源表达式：
+        // orphanIsTag=true（v4）：tagCol 用 ?(keepId)，entityCol 用 entityCol 原值
+        // orphanIsTag=false（v2）：tagCol 用 tagCol 原值，entityCol 用 ?(keepId)
+        let (tagSrc, entitySrc, whereCol) = orphanIsTag
+            ? ("?", entityCol, tagCol)
+            : (tagCol, "?", entityCol)
+        for orphanId in orphanIds {
+            try db.execute(
+                sql: """
+                INSERT OR IGNORE INTO \(link.rawValue) (\(tagCol), \(entityCol))
+                SELECT \(tagSrc), \(entitySrc) FROM \(link.rawValue) WHERE \(whereCol) = ?
+                """,
+                arguments: [keepId, orphanId])
+        }
+        for orphanId in orphanIds {
+            try db.execute(
+                sql: "DELETE FROM \(link.rawValue) WHERE \(whereCol) = ?",
+                arguments: [orphanId])
+        }
+    }
+
     static func makeMigrator() -> DatabaseMigrator {
         var m = DatabaseMigrator()
         m.registerMigration("v1_initial") { db in
@@ -125,20 +163,12 @@ enum AppMigrator {
                     try db.execute(sql: "UPDATE daily_report SET note = ?, updatedAt = ? WHERE id = ?",
                                    arguments: [merged, Date(), keepId])
                 }
-                // 把孤儿行的 tag 关系迁移到 keep（INSERT OR IGNORE 避免复合主键冲突）
-                for orphanId in orphanIds {
-                    try db.execute(sql: """
-                        INSERT OR IGNORE INTO tag_daily_report (tagId, reportId)
-                        SELECT tagId, ? FROM tag_daily_report WHERE reportId = ?
-                        """, arguments: [keepId, orphanId])
-                }
-                // 显式删除孤儿在 tag_daily_report 里的残留关系。
+                // 把孤儿行的 tag 关系迁移到 keep（INSERT OR IGNORE 避免复合主键冲突），
+                // 再显式删除孤儿在 tag_daily_report 里的残留关系。
                 // 不能依赖 ON DELETE CASCADE：GRDB DatabaseMigrator 默认 foreignKeysEnabled=false（防止
                 // schema 变更被 FK 拦截），CASCADE 在迁移期间不会触发，留下孤儿关系会导致后续运行时 FK 检查失败
-                for orphanId in orphanIds {
-                    try db.execute(sql: "DELETE FROM tag_daily_report WHERE reportId = ?",
-                                   arguments: [orphanId])
-                }
+                try migrateTagLinks(db, link: .dailyReport, orphanIsTag: false,
+                                    keepId: keepId, orphanIds: orphanIds)
                 // 删除孤儿 daily_report 行（tag 关系已显式清理，无需依赖 CASCADE）
                 for orphanId in orphanIds {
                     try db.execute(sql: "DELETE FROM daily_report WHERE id = ?",
@@ -163,37 +193,13 @@ enum AppMigrator {
                 guard rows.count > 1 else { continue }
                 let keepId: String = rows[0]["id"]
                 let orphanIds: [String] = rows.dropFirst().map { $0["id"] }
-                // 4 张中间表：把孤儿行的 tag 关系迁移到 keeper（INSERT OR IGNORE 避免复合主键冲突）
-                for orphanId in orphanIds {
-                    try db.execute(sql: """
-                        INSERT OR IGNORE INTO tag_daily_report (tagId, reportId)
-                        SELECT ?, reportId FROM tag_daily_report WHERE tagId = ?
-                        """, arguments: [keepId, orphanId])
-                    try db.execute(sql: """
-                        INSERT OR IGNORE INTO tag_todo (tagId, todoId)
-                        SELECT ?, todoId FROM tag_todo WHERE tagId = ?
-                        """, arguments: [keepId, orphanId])
-                    try db.execute(sql: """
-                        INSERT OR IGNORE INTO tag_work_entry (tagId, entryId)
-                        SELECT ?, entryId FROM tag_work_entry WHERE tagId = ?
-                        """, arguments: [keepId, orphanId])
-                    try db.execute(sql: """
-                        INSERT OR IGNORE INTO tag_meeting (tagId, meetingId)
-                        SELECT ?, meetingId FROM tag_meeting WHERE tagId = ?
-                        """, arguments: [keepId, orphanId])
-                }
-                // 显式清理孤儿在 4 张中间表的残留关系。
+                // 4 张中间表：把孤儿 tag 的关系迁移到 keeper（INSERT OR IGNORE 避免复合主键冲突），
+                // 再显式清理孤儿 tag 在 4 张中间表的残留关系。
                 // 不能依赖 ON DELETE CASCADE：GRDB DatabaseMigrator 默认 foreignKeysEnabled=false
                 // （v2 已踩过这个坑），迁移期间 CASCADE 不触发，残留关系会让后续运行时 FK 检查失败
-                for orphanId in orphanIds {
-                    try db.execute(sql: "DELETE FROM tag_daily_report WHERE tagId = ?",
-                                   arguments: [orphanId])
-                    try db.execute(sql: "DELETE FROM tag_todo WHERE tagId = ?",
-                                   arguments: [orphanId])
-                    try db.execute(sql: "DELETE FROM tag_work_entry WHERE tagId = ?",
-                                   arguments: [orphanId])
-                    try db.execute(sql: "DELETE FROM tag_meeting WHERE tagId = ?",
-                                   arguments: [orphanId])
+                for link in [RecordQueries.TagLinkTable.dailyReport, .todo, .workEntry, .meeting] {
+                    try migrateTagLinks(db, link: link, orphanIsTag: true,
+                                        keepId: keepId, orphanIds: orphanIds)
                 }
                 // 删除孤儿 tag 行（中间表关系已显式清理，无需依赖 CASCADE）
                 for orphanId in orphanIds {

@@ -222,16 +222,13 @@ struct TagPicker: View {
         }
     }
 
-    /// 默认配色板（与 ColorSwatchPicker 共用 TagPickerPalette.defaultPalette）
-    private static var palette: [String] { TagPickerPalette.defaultPalette }
-
     /// 选一个尚未被现有标签使用的调色板色；全用过则按数量轮转
     private func nextDefaultColor() -> String {
         let used = Set(allTags.map { $0.colorHex })
-        for c in Self.palette where !used.contains(c) {
+        for c in TagPickerPalette.defaultPalette where !used.contains(c) {
             return c
         }
-        return Self.palette[allTags.count % Self.palette.count]
+        return TagPickerPalette.defaultPalette[allTags.count % TagPickerPalette.defaultPalette.count]
     }
 
     /// 新建表单（popover 内，点取消或外部自动关闭）
@@ -289,7 +286,7 @@ struct ColorSwatchPicker: View {
     @Binding var hex: String
     @State private var showPopover = false
 
-    private var palette: [String] { TagPickerPalette.defaultPalette }
+
 
     var body: some View {
         Button { showPopover = true } label: {
@@ -307,7 +304,7 @@ struct ColorSwatchPicker: View {
             VStack(spacing: 10) {
                 Text("选择颜色").font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 8), count: 4), spacing: 8) {
-                    ForEach(palette, id: \.self) { c in
+                    ForEach(TagPickerPalette.defaultPalette, id: \.self) { c in
                         let isCurrent = (hex == c)
                         Circle()
                             .fill(Color(hex: c) ?? .gray)

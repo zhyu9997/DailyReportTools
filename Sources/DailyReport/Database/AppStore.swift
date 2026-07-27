@@ -290,24 +290,8 @@ final class AppStore {
             // 导致已 done 的任务被反复克隆。统一走枚举 .kind 计算属性更稳健
             guard current.kind != .done else { return }
             let wasPlanned = (current.kind == .planned)
-            if current.isRecurring && wasPlanned {
-                var next = WorkEntryRecord(
-                    id: UUID(),
-                    title: current.title,
-                    detail: current.detail,
-                    timestamp: Date(),
-                    kindRaw: WorkKind.planned.rawValue,
-                    finishDate: current.nextRecurrenceDate(),
-                    helper: nil,
-                    blockerStatusRaw: BlockerStatus.ongoing.rawValue,
-                    priorityRaw: current.priorityRaw,
-                    isRecurring: true,
-                    recurrenceUnitRaw: current.recurrenceUnitRaw,
-                    recurrenceInterval: current.recurrenceInterval,
-                    recurrenceWeekdays: current.recurrenceWeekdays,
-                    recurrenceMonthDays: current.recurrenceMonthDays,
-                    createdAt: Date()
-                )
+            if current.isRecurring && wasPlanned,
+               var next = current.spawnNext() {
                 try next.insert(db)
                 // 复制 tag 关系：fetch 原 entry 的 tag 列表 → replaceTagLinks 给新 entry
                 let tagIds = try UUID.fetchAll(

@@ -599,6 +599,34 @@ import GRDB
         #expect(store.entries.count == 1)
     }
 
+    // R29-B：planned + isRecurring=false 是日常最高频路径（一次性计划任务完成），
+    // 现有测试只覆盖 recurring=true 的克隆，一次性完成路径无显式锚定。
+    // 该路径核心：不克隆 + finishDate 覆盖为 Date() + tags 保留
+
+    @Test func markEntryDonePlannedOneShotLandsInPlaceWithoutClone() async throws {
+        let store = try Self.makeStore()
+        let tag = try store.insertTag(NewTag(name: "t", colorHex: "#000000"))
+        // planned + 非周期 + 有未来 finishDate（验证被覆盖为「现在」）
+        let originalFinish = Date().addingTimeInterval(7 * 24 * 3600)
+        let entry = try store.insertEntry(NewWorkEntry(
+            title: "P", detail: "", timestamp: Date(), kind: .planned,
+            tagIds: [tag.id], finishDate: originalFinish, helper: nil,
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            blockerStatus: .ongoing, priority: .medium
+        ))
+
+        let spawned = try store.markEntryDone(entry.id)
+        #expect(spawned == nil)
+
+        let after = store.entries.first(where: { $0.id == entry.id })
+        #expect(after?.kind == .done)
+        // finishDate 应被覆盖为「现在」，而非保留 7 天后（否则 XLSX 导出会错位归属日）
+        #expect(after?.finishDate != originalFinish)
+        #expect(store.tagsByEntry[entry.id]?.map(\.id) == [tag.id])
+        #expect(store.entries.count == 1)
+    }
+
     // MARK: - vacuum 错误路径
 
     @Test func vacuumOnReadOnlyQueueThrows() async throws {
