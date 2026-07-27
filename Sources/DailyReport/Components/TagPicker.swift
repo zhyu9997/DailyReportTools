@@ -224,11 +224,14 @@ struct TagPicker: View {
 
     /// 选一个尚未被现有标签使用的调色板色；全用过则按数量轮转
     private func nextDefaultColor() -> String {
+        let palette = TagPickerPalette.defaultPalette
+        // R30-A：防御未来若把 defaultPalette 改成空数组（编译期不阻止）导致 modulo by zero crash
+        guard !palette.isEmpty else { return "#4A90D9" }
         let used = Set(allTags.map { $0.colorHex })
-        for c in TagPickerPalette.defaultPalette where !used.contains(c) {
+        for c in palette where !used.contains(c) {
             return c
         }
-        return TagPickerPalette.defaultPalette[allTags.count % TagPickerPalette.defaultPalette.count]
+        return palette[allTags.count % palette.count]
     }
 
     /// 新建表单（popover 内，点取消或外部自动关闭）

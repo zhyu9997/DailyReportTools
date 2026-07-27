@@ -37,6 +37,30 @@ struct TodayView: View {
             .sorted { $0.timestamp < $1.timestamp }
     }
 
+    /// 今日用到的所有标签（去重）：聚合 entries + meetings + 今日计划列表三处 tag 关系。
+    /// R30-C 抽出：原版 body 内 18 行立即执行闭包，三段几乎相同（只换 store 关系映射 + owner 列表）
+    private func collectUsedTags(entries: [WorkEntryRecord],
+                                 meetings: [MeetingRecord]) -> [TagRecord] {
+        var seen = Set<UUID>()
+        var out: [TagRecord] = []
+        for e in entries {
+            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
+                seen.insert(t.id); out.append(t)
+            }
+        }
+        for m in meetings {
+            for t in (store?.tagsByMeeting[m.id] ?? []) where !seen.contains(t.id) {
+                seen.insert(t.id); out.append(t)
+            }
+        }
+        for e in plannedListBase {
+            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
+                seen.insert(t.id); out.append(t)
+            }
+        }
+        return out
+    }
+
     /// 计划列表的候选（非今日计划任务）。用 nowTick.startOfDay 锚点（与 todayEntries 的 report.date 同步刷新）
     private var plannedListBase: [WorkEntryRecord] {
         let slice = DaySlice(anchor: nowTick)
@@ -66,25 +90,9 @@ struct TodayView: View {
                 if let report {
                     let entries = todayEntries(for: report)
                     let meetings = todayMeetings(for: report)
-                    let usedTags: [TagRecord] = {
-                        var seen = Set<UUID>(); var out: [TagRecord] = []
-                        for e in entries {
-                            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
-                                seen.insert(t.id); out.append(t)
-                            }
-                        }
-                        for m in meetings {
-                            for t in (store?.tagsByMeeting[m.id] ?? []) where !seen.contains(t.id) {
-                                seen.insert(t.id); out.append(t)
-                            }
-                        }
-                        for e in plannedListBase {
-                            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
-                                seen.insert(t.id); out.append(t)
-                            }
-                        }
-                        return out
-                    }()
+                    // R30-C：原版 18 行立即执行闭包内联三段去重循环（entries + meetings + planned）。
+                    // 抽 collectUsedTags 后 body 主流程更清晰，去重逻辑只写一次
+                    let usedTags = collectUsedTags(entries: entries, meetings: meetings)
                     let filteredEntries = selectedTag.map { sel in
                         entries.filter { e in
                             (store?.tagsByEntry[e.id] ?? []).contains { $0.id == sel.id }

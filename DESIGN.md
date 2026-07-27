@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，196 tests / 13 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，202 tests / 14 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，196 tests / 13 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，202 tests / 14 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1046,6 +1046,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `NavigationCoordinatorTests` | 5 | 越界 rawValue 兜底回 .today + 负值兜底 + 合法值持久化 round-trip + openMeetingEdit 切 tab 并设 meetingRequest；`.serialized` 隔离 UserDefaults.standard 单例的并发串扰；`@MainActor` 标注匹配 R24-H 的 NavigationCoordinator 主线程隔离 |
 | `ReminderServiceTests` | 7 | decision 三分支决策：enabled=false → removeOnly（无视 status）/ enabled=true + denied → none（保留旧 pending）/ enabled=true + 非 denied（authorized/provisional/notDetermined）→ removeAndAdd；Decision case 互斥性回归（R22-A，原 ReminderService 是唯一无测试 Service） |
 | `NewEntryDraftTests` | 9 | canSubmit 拒空/拒纯空白 + consume 三分支（done/planned/blocker）的字段条件赋值（finishDate / helper / recurring / priority / blockerStatus）+ tagIds 映射 + reset 保留 kind/recurrenceUnit/recurrenceInterval（R24-F） |
+| `DaySliceTests` | 6 | contains(entry:) done 按 finishDate 归属 / planned 逾期归入今日 / planned 未来 finishDate 不归入 / contains(meeting:) 跨午夜边界（23:59 归今日、00:00 归次日）/ plannedSort 优先级 + finishDate 组合排序（R30-D，原 DaySlice 是 R24-B 抽出的核心组件，View/Store 共用，零测试覆盖） |
 
 ### 14.2 测试模式约定
 

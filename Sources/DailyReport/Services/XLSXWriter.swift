@@ -22,8 +22,14 @@ struct XLSXWriter {
     }
 
     // MARK: XML parts
+    /// R30-E：4 个固定 XML part 都是 `Data("""...""".utf8)` 同款模板，抽出命名 helper。
+    /// 读代码时一眼能看出「这只是把 XML 字符串包成 Data」，不用每次都核对 Data(.utf8) 的样板
+    private static func xmlPacket(_ body: String) -> Data {
+        Data(body.utf8)
+    }
+
     private func contentTypesXML() -> Data {
-        Data("""
+        Self.xmlPacket("""
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
         <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -31,36 +37,36 @@ struct XLSXWriter {
         <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
         <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
         </Types>
-        """.utf8)
+        """)
     }
 
     private func rootRelsXML() -> Data {
-        Data("""
+        Self.xmlPacket("""
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
         <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
         </Relationships>
-        """.utf8)
+        """)
     }
 
     private func workbookXML() -> Data {
-        Data("""
+        Self.xmlPacket("""
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
         <sheets>
         <sheet name="\(Self.escape(sheetName))" sheetId="1" r:id="rId1"/>
         </sheets>
         </workbook>
-        """.utf8)
+        """)
     }
 
     private func workbookRelsXML() -> Data {
-        Data("""
+        Self.xmlPacket("""
         <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
         <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
         </Relationships>
-        """.utf8)
+        """)
     }
 
     private func sheetXML() -> Data {

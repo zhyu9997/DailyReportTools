@@ -50,7 +50,7 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**196 tests / 13 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**202 tests / 14 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
@@ -107,7 +107,7 @@ Sources/DailyReport/
 ├── Views/                  # 概要 / 时间线 / 会议 / 周报 / 设置 / 菜单栏面板
 ├── Components/             # 复用组件（InlineSummaryEditor、TagPicker、KindPicker、RecurrenceEditor、WriteErrorAlert…）
 └── Services/               # 备份 / 导出 / 周期推进 / 提醒 / 日志
-Tests/DailyReportTests/      # 196 tests / 13 suites（详见 DESIGN.md §14）
+Tests/DailyReportTests/      # 202 tests / 14 suites（详见 DESIGN.md §14）
 scripts/build-app.sh         # 构建 + 打包（纯 CLT）
 Resources/Info.plist.template
 ```
