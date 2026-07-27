@@ -281,21 +281,40 @@ struct TodayView: View {
         }
     }
 
-    /// 统计概览条：完成/计划/问题/会议 计数 + 完成率（跟随当前标签筛选）
-    private func statBar(entries: [WorkEntryRecord], meetings: [MeetingRecord]) -> some View {
+    /// 概要统计的纯函数核心：完成/计划/问题/会议 计数 + 完成率。
+    /// R44-B：从 statBar body 抽出，让「total = 0 → rate = 0」兜底 + 三类计数语义可单测。
+    /// 改坏会让完成率除零 crash 或统计条数字与列表不一致
+    static func summaryStats(entries: [WorkEntryRecord], meetings: [MeetingRecord]) -> SummaryStats {
         let done = entries.filter { $0.kind == .done }.count
         let planned = entries.filter { $0.kind == .planned }.count
         let blocker = entries.filter { $0.kind == .blocker }.count
         let total = done + planned + blocker
         let rate = total > 0 ? Double(done) / Double(total) : 0
+        return SummaryStats(done: done, planned: planned, blocker: blocker,
+                            meetingCount: meetings.count, total: total, rate: rate)
+    }
+
+    /// 概要统计结果。R44-B：抽出 struct 让单测可断言具名字段，避免依赖元组字面量顺序
+    struct SummaryStats: Equatable {
+        let done: Int
+        let planned: Int
+        let blocker: Int
+        let meetingCount: Int
+        let total: Int
+        let rate: Double
+    }
+
+    /// 统计概览条：完成/计划/问题/会议 计数 + 完成率（跟随当前标签筛选）
+    private func statBar(entries: [WorkEntryRecord], meetings: [MeetingRecord]) -> some View {
+        let s = Self.summaryStats(entries: entries, meetings: meetings)
         return HStack(spacing: 8) {
-            statChip("完成", count: done, color: .green, icon: "checkmark.circle.fill")
-            statChip("计划", count: planned, color: .blue, icon: "calendar")
-            statChip("问题", count: blocker, color: .orange, icon: "exclamationmark.triangle.fill")
-            statChip("会议", count: meetings.count, color: .purple, icon: "person.3.fill")
+            statChip("完成", count: s.done, color: .green, icon: "checkmark.circle.fill")
+            statChip("计划", count: s.planned, color: .blue, icon: "calendar")
+            statChip("问题", count: s.blocker, color: .orange, icon: "exclamationmark.triangle.fill")
+            statChip("会议", count: s.meetingCount, color: .purple, icon: "person.3.fill")
             Spacer(minLength: 4)
             VStack(alignment: .leading, spacing: 0) {
-                Text("\(Int(rate * 100))%").font(.body.weight(.semibold))
+                Text("\(Int(s.rate * 100))%").font(.body.weight(.semibold))
                 Text("完成率").font(.caption2).foregroundStyle(.secondary)
             }
         }

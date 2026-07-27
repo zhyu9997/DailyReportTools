@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，428 tests / 40 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，453 tests / 44 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，428 tests / 40 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，453 tests / 44 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1071,6 +1071,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `WeekRangeTests` | 5 | WeeklyReportView.weekRange/weekDays 周锚点归一化：周中锚点（周三→本周一...日）/ 周日锚点（firstWeekday=1 仍归上周一，R34-D 钉的契约）/ 区间正好 7 天 / 跨月（02-01 周四→01-29...02-04）/ weekDays 连续 7 天首尾间隔 1 天（R43-B，原 private 实例属性零覆盖，抽 static 后可单测；改坏会让整周聚合错位） |
 | `SnapshotFromDBQueueTests` | 2 | BackupService.snapshotFromDBQueueIfPossible 容错路径：未迁移 schema 的 queue 触发 fetchAll 抛错→catch 分支 return 不写 salvage / 已迁移空 queue→buildSnapshotFromDB 返空 Snapshot→写出 salvage-*.json 可 decode 回空 Snapshot（R43-C，原两个 early-return 分支 read 失败 / snapshot nil 零覆盖，是主库损坏后「数据抢救」链路兜底） |
 | `CollectUsedTagsTests` | 7 | TodayView.collectUsedTags 三段去重（entries + meetings + planned）：空输入 / 单源各段 / 跨源去重（同 tag 三段都有只出一次）/ 首次出现顺序保留（a→b→c 按段顺序）/ entry 缺失 tag 映射不 crash（R43-D，原 private 实例方法零覆盖，抽 static 接收 5 参数 entries/meetings/planned + tagsByEntry/tagsByMeeting；改坏会让标签栏重复或漏 tag） |
+| `ValidReviewsTests` | 6 | MeetingCard.validReviews 过滤+排序：空输入 / 双空占位行被丢弃（reviewer+opinion 都空）/ 仅 reviewer 有值保留 / 仅 opinion 有值保留 / order 升序乱序验证（3,1,2→1,2,3）/ 同 order 兜底（R44-A，原 instance computed property 零覆盖，抽 `static func validReviews(from:)`；改坏会让卡片标题显示「评审（3）」但实际只有 1 条） |
+| `SummaryStatsTests` | 5 | TodayView.summaryStats 概要统计：空输入 rate=0 防除零 / 三类计数各自独立 / 会议数不计入完成率 total / 完成率 = done/total / 全计划无完成时 rate=0（R44-B，原内联在 statBar ViewBuilder 零覆盖，抽 `static func summaryStats(entries:meetings:) -> SummaryStats`；改坏会除零 crash 或统计条数字与列表不一致） |
+| `BoardItemTests` | 9 | HistoryView.BoardItem 派生属性：id（entry.id / meeting.id）/ sortDate（任务取 finishDate ?? timestamp，会议固定 timestamp）/ priorityOf（任务取自身 priority，会议固定 medium）/ statusOf（任务取自身 blockerStatus，会议固定 ongoing）三路派生参数化全 case（R44-C，原 private enum + private instance 方法零覆盖，BoardItem 改 internal + 两个 helper 改 static；改坏会让计划列分组错位或状态分组混入会议） |
+| `PlannedColumnSortTests` | 5 | HistoryView.sortPlannedColumn 复合排序：空输入 / 优先级 sortOrder 升序（low/high/medium→high/medium/low）/ 同优先级按 sortDate 升序 / 优先级主导时间（高优晚时仍排前）/ 会议默认 medium 与 medium 任务同组按时间（R44-D，原内联在 columnItems 闭包零覆盖，抽 `static func sortPlannedColumn(_:)`；改坏会让高优先级沉底或逾期任务被掩盖） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1133,6 +1137,10 @@ R43-A 新建 `MatchesSearchTests` 7 用例（HistoryView.matchesSearch 搜索过
 R43-B 新建 `WeekRangeTests` 5 用例（WeeklyReportView.weekRange/weekDays 周锚点归一化），WeekRangeTests 用例数 0 → 5。原 private 实例属性零覆盖，抽 `static func weekRange(anchor:)` + `static func weekDays(start:)` 后可单测。改坏会让整周聚合错位（任务算到错的周 / weekDays 少一天导致 UI 缺列）。`@MainActor` 标注匹配 SwiftUI View 主线程隔离。
 R43-C 新建 `SnapshotFromDBQueueTests` 2 用例（BackupService.snapshotFromDBQueueIfPossible 容错路径），SnapshotFromDBQueueTests 用例数 0 → 2。用 `backupDirectoryOverride` 注入 tmp 目录隔离文件副作用。覆盖原两个 early-return 分支：未迁移 schema 的 queue 触发 fetchAll 抛错→catch return / 已迁移空 queue→写 salvage JSON 可 decode 回空 Snapshot。是主库损坏后「数据抢救」链路的兜底，原零覆盖。
 R43-D 新建 `CollectUsedTagsTests` 7 用例（TodayView.collectUsedTags 三段去重），CollectUsedTagsTests 用例数 0 → 7。原 private 实例方法零覆盖，抽 `static func collectUsedTags(entries:meetings:planned:tagsByEntry:tagsByMeeting:)` 接收 5 参数。改坏会让今日页面标签栏重复显示 tag 或漏掉某个 tag。
+R44-A 新建 `ValidReviewsTests` 6 用例（MeetingCard.validReviews 过滤+排序），ValidReviewsTests 用例数 0 → 6。原 instance computed property 零覆盖，抽 `static func validReviews(from:)` 后可单测。覆盖占位行过滤（reviewer+opinion 双空丢弃，仅一项有值保留）+ order 升序。改坏会让卡片标题显示「评审（3）」但实际只有 1 条（占位行污染）或顺序错乱。`@MainActor` 标注匹配 SwiftUI View 主线程隔离。
+R44-B 新建 `SummaryStatsTests` 5 用例（TodayView.summaryStats 概要统计），SummaryStatsTests 用例数 0 → 5。原内联在 statBar ViewBuilder 里零覆盖，抽 `static func summaryStats(entries:meetings:) -> SummaryStats`（含具名 struct 让断言可读，避免依赖元组字面量顺序）后可单测。覆盖「total = done+planned+blocker（不含会议）/ rate = total > 0 ? done/total : 0」防除零契约。改坏会除零 crash 或统计条数字与列表不一致。
+R44-C 新建 `BoardItemTests` 9 用例（HistoryView.BoardItem 派生属性），BoardItemTests 用例数 0 → 9。原 `private enum BoardItem` + 两个 `private func priorityOf/statusOf` 零覆盖，BoardItem 改 internal + 两个 helper 改 `static func`。覆盖 id/sortDate（finishDate ?? timestamp fallback / 会议固定 timestamp）/ priorityOf（任务取自身 priority 三档 / 会议固定 medium）/ statusOf（任务取自身 blockerStatus 三档 / 会议固定 ongoing）全 case。改坏会让计划列分组错位（高优先级跑到底部）或状态分组混入会议（ongoing 误归类）。
+R44-D 新建 `PlannedColumnSortTests` 5 用例（HistoryView.sortPlannedColumn 复合排序），PlannedColumnSortTests 用例数 0 → 5。原内联在 columnItems 闭包 `items.sorted { ... }` 零覆盖，抽 `static func sortPlannedColumn(_:)` 后可单测。覆盖「优先级 sortOrder 升序 → sortDate 升序」复合契约（含会议默认 medium 与 medium 任务同组按时间排序）。改坏会让高优先级沉底（用户看不到最重要的待办）或逾期任务被远期任务掩盖。
 
 ### 14.2 测试模式约定
 

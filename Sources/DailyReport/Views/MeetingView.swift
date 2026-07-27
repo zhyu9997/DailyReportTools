@@ -68,6 +68,13 @@ struct MeetingCard: View {
     private var reviews: [ReviewRecord] { store?.reviewsByMeeting[meeting.id] ?? [] }
 
     private var validReviews: [ReviewRecord] {
+        Self.validReviews(from: reviews)
+    }
+
+    /// 过滤 + 排序的纯函数核心：丢弃 reviewer/opinion 双空的占位行（用户点了添加又没填），
+    /// 再按 order 升序稳定排列。R44-A：从 instance 抽 static 让单测可覆盖两段语义。
+    /// 改坏会让空评审污染卡片（标题显示「评审（3）」但实际只有 1 条），或顺序错乱
+    static func validReviews(from reviews: [ReviewRecord]) -> [ReviewRecord] {
         reviews.filter { !$0.reviewer.isEmpty || !$0.opinion.isEmpty }
             .sorted { $0.order < $1.order }
     }

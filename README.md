@@ -50,7 +50,7 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**428 tests / 40 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**453 tests / 44 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
@@ -77,6 +77,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `WeekRangeTests` (5) | WeeklyReportView.weekRange/weekDays 周锚点归一化：周中锚点 / 周日归上周一（firstWeekday=1 仍锁周一）/ 区间正好 7 天 / 跨月 / weekDays 连续 7 天（R43-B，原 private 实例属性零覆盖） |
 | `SnapshotFromDBQueueTests` (2) | BackupService.snapshotFromDBQueueIfPossible 容错路径：未迁移 schema 的 queue 触发 read 抛错→无 salvage / 已迁移空 queue→写出 salvage JSON 可 decode（R43-C，原两个 early-return 分支零覆盖） |
 | `CollectUsedTagsTests` (7) | TodayView.collectUsedTags 三段去重（entries + meetings + planned）：空输入 / 单源 / 跨源去重 / 首次出现顺序 / 缺失 tag 映射不 crash（R43-D，原 private 实例方法零覆盖，抽 static 接收 5 参数） |
+| `ValidReviewsTests` (6) | MeetingCard.validReviews 过滤+排序：空输入 / 双空占位行被丢弃 / 仅 reviewer 保留 / 仅 opinion 保留 / order 升序 / 同 order 兜底（R44-A，原 instance computed property 零覆盖） |
+| `SummaryStatsTests` (5) | TodayView.summaryStats 概要统计：空输入 rate=0 防除零 / 三类计数 / 会议数不计入完成率 / 完成率 = done/total / 全计划无完成时 rate=0（R44-B，原内联在 statBar ViewBuilder 零覆盖） |
+| `BoardItemTests` (9) | HistoryView.BoardItem 派生属性：id/sortDate（finishDate ?? timestamp / 会议 timestamp）/ priorityOf（任务取自身 / 会议固定 medium）/ statusOf（任务取自身 / 会议固定 ongoing）三路派生（R44-C，原 private enum + private instance 方法零覆盖） |
+| `PlannedColumnSortTests` (5) | HistoryView.sortPlannedColumn 复合排序：空输入 / 优先级 sortOrder 升序 / 同优先级按 sortDate 升序 / 优先级主导时间 / 会议默认 medium 与 medium 任务同组（R44-D，原内联在 columnItems 闭包零覆盖） |
 
 View 层不测（SwiftUI 视图组合靠人工验证）。
 
@@ -117,7 +121,7 @@ Sources/DailyReport/
 ├── Views/                  # 概要 / 时间线 / 会议 / 周报 / 设置 / 菜单栏面板
 ├── Components/             # 复用组件（InlineSummaryEditor、TagPicker、KindPicker、RecurrenceEditor、WriteErrorAlert…）
 └── Services/               # 备份 / 导出 / 周期推进 / 提醒 / 日志
-Tests/DailyReportTests/      # 353 tests / 32 suites（详见 DESIGN.md §14）
+Tests/DailyReportTests/      # 453 tests / 44 suites（详见 DESIGN.md §14）
 scripts/build-app.sh         # 构建 + 打包（纯 CLT）
 Resources/Info.plist.template
 ```

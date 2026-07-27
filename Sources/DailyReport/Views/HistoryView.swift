@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// 看板里的一格：可能来自工作任务，也可能来自会议纪要
-private enum BoardItem: Identifiable {
+/// R44-C：从 private 改 internal 让单测可直接构造 .entry/.meeting 验证派生属性
+enum BoardItem: Identifiable {
     case entry(WorkEntryRecord)
     case meeting(MeetingRecord)
 
@@ -98,25 +99,36 @@ struct HistoryView: View {
         }
         // 计划列：优先级（高→低）→ 计划时间（先→后）
         if kind == .planned {
-            return items.sorted { lhs, rhs in
-                let lp = priorityOf(lhs)
-                let rp = priorityOf(rhs)
-                if lp.sortOrder != rp.sortOrder { return lp.sortOrder < rp.sortOrder }
-                return lhs.sortDate < rhs.sortDate
-            }
+            return Self.sortPlannedColumn(items)
         } else {
             return items.sorted { $0.sortDate > $1.sortDate }
         }
     }
 
-    private func priorityOf(_ item: BoardItem) -> Priority {
+    /// 计划列复合排序：优先级 sortOrder 升序（High<Medium<Low）→ sortDate 升序（先→后）。
+    /// R44-D：从 columnItems 抽 static 让排序契约可单测（会议项默认 medium 优先级，
+    /// 同优先级内任务/会议混排按时间）。改坏会让高优先级沉底或逾期任务被掩盖
+    static func sortPlannedColumn(_ items: [BoardItem]) -> [BoardItem] {
+        items.sorted { lhs, rhs in
+            let lp = Self.priorityOf(lhs)
+            let rp = Self.priorityOf(rhs)
+            if lp.sortOrder != rp.sortOrder { return lp.sortOrder < rp.sortOrder }
+            return lhs.sortDate < rhs.sortDate
+        }
+    }
+
+    /// 看板项的优先级派生：任务取自身 priority，会议项无优先级概念固定 medium（与 planned 列默认对齐）。
+    /// R44-C：从 private instance 改 static 让单测可直接验证三路派生
+    static func priorityOf(_ item: BoardItem) -> Priority {
         switch item {
         case .entry(let e): return e.priority
         case .meeting: return .medium
         }
     }
 
-    private func statusOf(_ item: BoardItem) -> BlockerStatus {
+    /// 看板项的状态派生：任务取自身 blockerStatus，会议项无状态概念固定 ongoing。
+    /// R44-C：从 private instance 改 static 让单测可直接验证三路派生
+    static func statusOf(_ item: BoardItem) -> BlockerStatus {
         switch item {
         case .entry(let e): return e.blockerStatus
         case .meeting: return .ongoing
@@ -288,7 +300,7 @@ struct HistoryView: View {
     private func plannedSections(_ items: [BoardItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach([Priority.high, .medium, .low]) { p in
-                let group = items.filter { priorityOf($0) == p }
+                let group = items.filter { Self.priorityOf($0) == p }
                 prioritySection(p, items: group)
             }
         }
@@ -343,7 +355,7 @@ struct HistoryView: View {
     private func blockerSections(_ items: [BoardItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach([Priority.high, .medium, .low]) { p in
-                let group = items.filter { priorityOf($0) == p }
+                let group = items.filter { Self.priorityOf($0) == p }
                 blockerPrioritySection(p, items: group)
             }
         }
@@ -385,7 +397,7 @@ struct HistoryView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach([BlockerStatus.ongoing, .monitor, .closed]) { s in
-                        let subgroup = items.filter { statusOf($0) == s }
+                        let subgroup = items.filter { Self.statusOf($0) == s }
                         if !subgroup.isEmpty {
                             blockerStatusSubSection(s, priority: p, items: subgroup)
                         }
