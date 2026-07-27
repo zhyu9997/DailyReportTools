@@ -20,7 +20,8 @@ extension BackupService {
 
     /// 兜底快照：从 AppStore 内存读，不走事务（只在 read 事务失败时用）
     /// R21-C：record → DTO 映射抽到 toDTO helper，与 buildSnapshotFromDB 共用同一份规则
-    private static func snapshotFromMemory(in store: AppStore) -> Snapshot {
+    /// R39-C：从 private 改 internal 让单测能直接覆盖降级路径（snapshotAtomic catch 分支的兜底）
+    static func snapshotFromMemory(in store: AppStore) -> Snapshot {
         Snapshot(
             exportedAt: Date(),
             tags: store.tags.map(toDTO),

@@ -70,6 +70,43 @@ import GRDB
         #expect(snap.reviews.first?.reviewer == "R")
     }
 
+    // MARK: - R39-C: snapshotFromMemory 降级路径
+    // snapshotAtomic 在 read 事务失败时（理论上极少发生）fallback 到 snapshotFromMemory，
+    // 从 store 内存读 6 主表 + 关系。原版只走 happy path（事务读取成功），降级路径从未被触发。
+    // 改 private → internal 后可直接验证映射规则与 snapshotAtomic 一致
+
+    @Test func snapshotFromMemoryMirrorsInMemoryState() async throws {
+        let store = try Self.makeStore()
+        let t1 = try store.insertTag(NewTag(name: "mem-a", colorHex: "#000000"))
+        let t2 = try store.insertTag(NewTag(name: "mem-b", colorHex: "#111111"))
+
+        _ = try store.insertEntry(NewWorkEntry(
+            title: "MemEntry", detail: "d", timestamp: Date(), kind: .done,
+            tagIds: [t1.id], finishDate: nil, helper: nil,
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            blockerStatus: .ongoing, priority: .medium
+        ))
+
+        _ = try store.insertMeeting(NewMeeting(
+            topic: "MemMeeting", summary: "s", timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            tagIds: [t2.id], reviews: [NewReview(reviewer: "Z", opinion: "go")]
+        ))
+
+        let snap = BackupService.snapshotFromMemory(in: store)
+        // 6 主表计数与 store 内存一致
+        #expect(snap.tags.count == 2)
+        #expect(snap.entries.count == 1)
+        #expect(snap.meetings.count == 1)
+        #expect(snap.reviews.count == 1)
+        // 关系映射正确（与 snapshotAtomic 同款规则）
+        #expect(snap.entries.first?.tagIds == [t1.id])
+        #expect(snap.meetings.first?.tagIds == [t2.id])
+        #expect(snap.reviews.first?.reviewer == "Z")
+    }
+
     // MARK: - restore round-trip
 
     @Test func restoreReplacesAllDataAndPreservesRelations() async throws {

@@ -68,12 +68,22 @@ final class ExportService {
     func exportTodosCSV(_ todos: [TodoItemRecord], tagsByTodo: [UUID: [TagRecord]]) throws {
         var csv = "标题,是否完成,截止日期,创建时间,完成时间,标签\n"
         for t in todos {
-            let due = t.dueDate.map { $0.isoDay } ?? ""
-            let done = t.completedAt.map { $0.isoDay } ?? ""
             let tags = (tagsByTodo[t.id] ?? []).map(\.name).joined(separator: "/")
-            csv += "\(Self.csvEscape(t.title)),\(t.isDone ? "是" : "否"),\(due),\(t.createdAt.isoDay),\(done),\(Self.csvEscape(tags))\n"
+            csv += Self.todoCSVRow(title: t.title, isDone: t.isDone,
+                                   dueDate: t.dueDate, completedAt: t.completedAt,
+                                   createdAt: t.createdAt, tags: tags)
         }
         try save(filename: "待办-\(Date().isoDay).csv", content: csv)
+    }
+
+    /// 单条 Todo → CSV 行（不含末尾换行）。
+    /// R39-H 抽出：原版 25 行 exportTodosCSV 把字段格式化 + csvEscape + 拼接混在一起，
+    /// 绑死 NSSavePanel 无法单测。抽出后可钉死 nil 渲染空串 / isDone→"是" / tags 走 csvEscape
+    static func todoCSVRow(title: String, isDone: Bool, dueDate: Date?,
+                           completedAt: Date?, createdAt: Date, tags: String) -> String {
+        let due = dueDate.map { $0.isoDay } ?? ""
+        let done = completedAt.map { $0.isoDay } ?? ""
+        return "\(csvEscape(title)),\(isDone ? "是" : "否"),\(due),\(createdAt.isoDay),\(done),\(csvEscape(tags))\n"
     }
 
     // MARK: - helpers

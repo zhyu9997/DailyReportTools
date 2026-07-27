@@ -276,6 +276,29 @@ import GRDB
         #expect(store.tagsByReport[report.id]?.isEmpty ?? true)
     }
 
+    // MARK: - R39-F: setReportTags unknown reportId 路径
+    // replaceTagLinks 内部 DELETE WHERE owner=?（unknown id 影响 0 行）+ INSERT。
+    // 空 tagIds + unknown id：INSERT 空数组 no-op → 整体 no-op 不抛错
+    // 非空 tagIds + unknown id：INSERT 时 reportId 在 daily_report 表不存在 → FK 违规抛错
+    // 之前 4 个 setXxxTags 的 unknown id 路径都未覆盖（仅 setReportTagsReplacesAll 走 happy path）
+
+    @Test func setReportTagsUnknownIdWithEmptyTagsIsNoOp() async throws {
+        let store = try Self.makeStore()
+        // unknown reportId + 空 tagIds：DELETE 0 行 + insertTagLinks 空数组 no-op
+        // 不抛错（防 guard 被误改成 try update 会崩）
+        try store.setReportTags(UUID(), tagIds: [])
+        #expect(store.reports.isEmpty)   // 没有副作用
+    }
+
+    @Test func setReportTagsUnknownIdWithNonEmptyTagsThrowsFKViolation() async throws {
+        let store = try Self.makeStore()
+        let tag = try store.insertTag(NewTag(name: "orphan", colorHex: "#000000"))
+        // unknown reportId + 非空 tagIds：INSERT 触发 FK 违规（reportId 不存在）
+        #expect(throws: Error.self) {
+            try store.setReportTags(UUID(), tagIds: [tag.id])
+        }
+    }
+
     // MARK: - deleteEntry 清理 tag_work_entry（CASCADE）
 
     @Test func deleteEntryCascadesTagLinks() async throws {

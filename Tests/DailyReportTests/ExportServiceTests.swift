@@ -160,6 +160,52 @@ import Foundation
         let md = ExportService.markdownForDay(data)
         #expect(!md.contains("### 备注"))
     }
+
+    // MARK: - R39-H: todoCSVRow 纯函数单测
+    // exportTodosCSV 原版 25 行把字段格式化 + csvEscape + 拼接混在一起，绑死 NSSavePanel 无法单测。
+    // 抽出 todoCSVRow 后可钉死：nil → 空串 / isDone → "是" / tags 走 csvEscape / 字段顺序
+
+    private let cal: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        return c
+    }()
+
+    @Test func todoCSVRowRendersEmptyForNilDueAndCompleted() {
+        let created = cal.date(from: DateComponents(year: 2026, month: 7, day: 27))!
+        let row = ExportService.todoCSVRow(title: "任务", isDone: false,
+                                           dueDate: nil, completedAt: nil,
+                                           createdAt: created, tags: "")
+        // nil dueDate/completedAt → 空串（不是 "nil" / 默认日期）
+        // 格式：标题,isDone,空,创建时间,空,空
+        #expect(row.contains("任务"))
+        #expect(row.contains("否"))   // isDone=false
+        #expect(row.contains("2026-07-27"))   // createdAt.isoDay
+        // 空串字段在 CSV 里应为空（连续逗号）
+        #expect(row.contains(",,"))   // 至少有一对连续逗号（空字段）
+    }
+
+    @Test func todoCSVRowRendersDoneAndCompletedDate() {
+        let due = cal.date(from: DateComponents(year: 2026, month: 8, day: 1))!
+        let done = cal.date(from: DateComponents(year: 2026, month: 7, day: 28))!
+        let created = cal.date(from: DateComponents(year: 2026, month: 7, day: 20))!
+        let row = ExportService.todoCSVRow(title: "完成它", isDone: true,
+                                           dueDate: due, completedAt: done,
+                                           createdAt: created, tags: "")
+        #expect(row.contains("是"))            // isDone=true → "是"
+        #expect(row.contains("2026-08-01"))    // dueDate.isoDay
+        #expect(row.contains("2026-07-28"))    // completedAt.isoDay
+    }
+
+    @Test func todoCSVRowEscapesTagsWithComma() {
+        // tags 含逗号 → csvEscape 应加双引号包裹（RFC 4180）
+        let created = Date()
+        let row = ExportService.todoCSVRow(title: "t", isDone: false,
+                                           dueDate: nil, completedAt: nil,
+                                           createdAt: created, tags: "a,b")
+        // "a,b" 应被 csvEscape 包成 "\"a,b\""
+        #expect(row.contains("\"a,b\""))
+    }
 }
 
 /// 测试 fixture：构造 WorkEntryRecord 时省去 14 字段的样板

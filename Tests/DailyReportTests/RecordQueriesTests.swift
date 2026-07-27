@@ -275,4 +275,23 @@ import GRDB
         #expect(result[m1]?.count == 1)
         #expect(result.values.flatMap { $0 }.count == 1)
     }
+
+    // MARK: - R39-K: TagLinkTable.rawValue 与中间表 Record.databaseTableName 一致性
+    // fetchTagMap / replaceTagLinks / insertTagLinks / truncateAll 都用 link.rawValue 拼 SQL，
+    // 但 rawValue 与 4 个中间表 struct 的 databaseTableName 无编译期约束。
+    // 改其中一处（如把 TagDailyReport.databaseTableName 改成 "tag_report"）会让
+    // fetchTagMap 的 SELECT 拼出错误表名，运行时 crash。参数化钉死一致性
+
+    @Test(arguments: RecordQueries.TagLinkTable.allCases)
+    func rawValueMatchesCorrespondingRecordDatabaseTableName(link: RecordQueries.TagLinkTable) {
+        // rawValue 必须与对应 Record 的 databaseTableName 字符串相等
+        let expected: String
+        switch link {
+        case .dailyReport: expected = TagDailyReport.databaseTableName
+        case .todo:        expected = TagTodo.databaseTableName
+        case .workEntry:   expected = TagWorkEntry.databaseTableName
+        case .meeting:     expected = TagMeeting.databaseTableName
+        }
+        #expect(link.rawValue == expected)
+    }
 }

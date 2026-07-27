@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，333 tests / 30 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，353 tests / 32 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，333 tests / 30 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，353 tests / 32 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1033,22 +1033,22 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 
 | Suite | 用例数 | 覆盖点 |
 |---|---|---|
-| `AppStoreTests` | 47 | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + 关系重建（4 张中间表）+ CASCADE + transactional 回滚 + unknown id 静默 no-op（update + delete 全覆盖，R27-F 补 deleteTag/Todo/Meeting）+ addReview FK 违规 + addReview order 事务内 MAX+1（R23-A）+ markEntryDone race 防御 + markEntryDone blocker→done 原地降级（R28-F）+ markEntryDone planned+非周期 原地降级（R29-B）+ vacuum + insert 路径的 tag/review 同步绑定（R21-A）+ getOrCreateTag 三分支（新名新建 / 同名复用 / 大小写不敏感）（R37-B）+ updateTag 选择性更新四分支（仅 name / 仅 colorHex / 两者 / 两者皆空 no-op）（R37-C）+ deleteEntries/deleteTodos 空数组早退 no-op（R38-I）+ truncateAll 4 张中间表参数化穷举（R38-B） |
+| `AppStoreTests` | 49 | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + 关系重建（4 张中间表）+ CASCADE + transactional 回滚 + unknown id 静默 no-op（update + delete 全覆盖，R27-F 补 deleteTag/Todo/Meeting）+ addReview FK 违规 + addReview order 事务内 MAX+1（R23-A）+ markEntryDone race 防御 + markEntryDone blocker→done 原地降级（R28-F）+ markEntryDone planned+非周期 原地降级（R29-B）+ vacuum + insert 路径的 tag/review 同步绑定（R21-A）+ getOrCreateTag 三分支（新名新建 / 同名复用 / 大小写不敏感）（R37-B）+ updateTag 选择性更新四分支（仅 name / 仅 colorHex / 两者 / 两者皆空 no-op）（R37-C）+ deleteEntries/deleteTodos 空数组早退 no-op（R38-I）+ truncateAll 4 张中间表参数化穷举（R38-B）+ setReportTags unknown id 路径（空 tagIds no-op / 非空 FK 违规抛错）（R39-F） |
 | `MigratorTests` | 9 | v1→v2 dedup（保最早 createdAt、合并非空 note、迁移 tag 关系）+ UNIQUE 约束生效；no-op on clean v1；v3 扩展性 + 幂等性 + 索引回归；v4 tag.name dedup（保最早 createdAt、4 张中间表关系 INSERT OR IGNORE 迁移 + 显式清理 dangling）+ v4 no-op on clean database（R22-A）；v5 review UNIQUE(meetingId, order) 按 createdAt 升序 renumber + no-op on clean database（R23-A） |
 | `BackupServiceTests` | 41 | weekKey 计算（周一锚点 + R25-G 补 Tue/Wed/Thu + 跨月/跨年边界）+ 各类 backup 文件存在性 + prune 策略 + decode 高版本/坏 JSON 拒绝 + Snapshot round-trip + decode 加固（payloadTooLarge / danglingTagReference 拒绝 + 自一致 snapshot 通过）（R22-A）+ parseISO8601 双分支（标准 / 带毫秒 / 损坏 / round-trip）（R36-A）+ enumerateBackups 边界（目录不存在 / 非 matching prefix/suffix / suffixLength 分支 / 无 suffix 分支）（R36-C） |
-| `BackupServiceIntegrationTests` | 8 | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + encode/decode 保留 recurrence 字段 + weeklyBackupIfDue 窗口判定（周四跳 / 周五写 / 同周幂等 / 写失败返回 false）（R24-G） |
+| `BackupServiceIntegrationTests` | 9 | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + encode/decode 保留 recurrence 字段 + weeklyBackupIfDue 窗口判定（周四跳 / 周五写 / 同周幂等 / 写失败返回 false）（R24-G）+ snapshotFromMemory 降级路径（6 主表 + 关系映射与 snapshotAtomic 一致）（R39-C，snapshotFromMemory 从 private 改 internal） |
 | `AppDatabaseTests` | 9 | archiveCorruptedDB 三文件归档 + 缺源 no-op + 同秒碰撞后缀 + README 写入 + **corrupted/ 被占用为文件时的失败路径**（R26-F）；pruneCorruptedArchives 保留最近 N + 数量不足 no-op + 目录缺失 no-op（R23-C）+ IntegrityError.description 同时包含 label + message + 前缀（R38-J） |
 | `RecurrenceServiceTests` | 15 | sweepMeetings/sweepWorkEntries 各场景（逾期推进 / 今天保留 / 一次性会议保留 / 同主题残留清理）+ markDone 克隆下一期 / blocker → done / 已 done 的 race no-op + 月度周期跨月边界（R21-A）+ cleanupExpiry 保留分支（summary 非空 / review 非空）（R25-F） |
 | `RecurrenceTests` | 27 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 + base 在未来时 interval 不影响返回（R29-D）+ weekdayLong 1...7 双字映射 + 越界返回 ? + 与 weekdaySymbol 同源数据一致性（R35-F）+ weekdaySymbol 越界直接覆盖（0/8/-1 返回 ?）+ 1...7 单字非空（R37-G，原仅靠 weekdayLong 间接覆盖） |
 | `XLSXWriterTests` | 22 | XML 转义（4 实体 + 边界）+ 列字母转换（A-Z / AA-ZZ / AAA-ZZZ）+ CRC32 标准向量 + dosDateTime 边界（year<1980 clamp + 正常位打包 + 1980-01-01 边界）（R37-F，原 private 改 internal 直覆边界分支） |
 | `AppLoggerTests` | 7 | 日志滚动：未达上限 no-op / 创建 `.1` / 顺移现有文件 / 满槽删最旧 / maxBytes=0 立即滚 / keepCount=1 直删原文件 |
-| `ExportServiceTests` | 17 | csvEscape（RFC 4180 三种触发条件）+ sanitizeSheetName（7 禁用字符 + 31 字符截断）+ sanitizeFilename + weekdayName + markdownForDay 分组排序 + tag 渲染 + report note 渲染（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的提前 return bug）+ WorkKind.emoji 编译期覆盖所有 case |
+| `ExportServiceTests` | 20 | csvEscape（RFC 4180 三种触发条件）+ sanitizeSheetName（7 禁用字符 + 31 字符截断）+ sanitizeFilename + weekdayName + markdownForDay 分组排序 + tag 渲染 + report note 渲染（R21-A 测试发现并修复了「entries 为空时 note 不渲染」的提前 return bug）+ WorkKind.emoji 编译期覆盖所有 case + todoCSVRow 纯函数（nil 渲染空串 / isDone→"是" / tags 走 csvEscape）（R39-H，原 25 行 exportTodosCSV 抽出） |
 | `NavigationCoordinatorTests` | 5 | 越界 rawValue 兜底回 .today + 负值兜底 + 合法值持久化 round-trip + openMeetingEdit 切 tab 并设 meetingRequest；`.serialized` 隔离 UserDefaults.standard 单例的并发串扰；`@MainActor` 标注匹配 R24-H 的 NavigationCoordinator 主线程隔离 |
 | `ReminderServiceTests` | 7 | decision 三分支决策：enabled=false → removeOnly（无视 status）/ enabled=true + denied → none（保留旧 pending）/ enabled=true + 非 denied（authorized/provisional/notDetermined）→ removeAndAdd；Decision case 互斥性回归（R22-A，原 ReminderService 是唯一无测试 Service） |
 | `NewEntryDraftTests` | 9 | canSubmit 拒空/拒纯空白 + consume 三分支（done/planned/blocker）的字段条件赋值（finishDate / helper / recurring / priority / blockerStatus）+ tagIds 映射 + reset 保留 kind/recurrenceUnit/recurrenceInterval（R24-F） |
 | `DaySliceTests` | 6 | contains(entry:) done 按 finishDate 归属 / planned 逾期归入今日 / planned 未来 finishDate 不归入 / contains(meeting:) 跨午夜边界（23:59 归今日、00:00 归次日）/ plannedSort 优先级 + finishDate 组合排序（R30-D，原 DaySlice 是 R24-B 抽出的核心组件，View/Store 共用，零测试覆盖） |
 | `AppStateTests` | 3 | migrateLegacyKeysIfNeeded 三分支：legacy 有值 + new 缺失 → 拷贝（5 对 key 类型保真：Bool/Int/Int/String/Int）/ new 已存在 → 不覆盖（保用户后续修改）/ 双方都没值 → 无副作用 no-op（R31-G，原启动期一次性迁移零覆盖，误改「总是覆盖」会丢用户设置） |
-| `RecordQueriesTests` | 10 | fetchTagMap 三分支：空中间表返 [:] / 单 owner 多 tag 按中间表插入顺序保留（不重排为 createdAt）/ tagId 在传入 allTagsById 找不到时静默跳过（R32-C，原仅靠 AppStoreTests 集成间接覆盖，无直接断言钉死顺序与 dangling 兜底）+ insertTagLinks INSERT 路径参数化 4 个 TagLinkTable + 空 tagIds 幂等（R36-D）+ TagLinkTable.ownerColumn 直接覆盖（非空 + 互斥）（R38-C）+ fetchReviewsByMeeting 三分支（空表 / 多 review 按 order+createdAt 升序 / meetingId=nil 孤儿跳过）（R38-A） |
+| `RecordQueriesTests` | 11 | fetchTagMap 三分支：空中间表返 [:] / 单 owner 多 tag 按中间表插入顺序保留（不重排为 createdAt）/ tagId 在传入 allTagsById 找不到时静默跳过（R32-C，原仅靠 AppStoreTests 集成间接覆盖，无直接断言钉死顺序与 dangling 兜底）+ insertTagLinks INSERT 路径参数化 4 个 TagLinkTable + 空 tagIds 幂等（R36-D）+ TagLinkTable.ownerColumn 直接覆盖（非空 + 互斥）（R38-C）+ fetchReviewsByMeeting 三分支（空表 / 多 review 按 order+createdAt 升序 / meetingId=nil 孤儿跳过）（R38-A）+ TagLinkTable.rawValue 与对应 Record.databaseTableName 一致性参数化（R39-K） |
 | `IntArrayJSONTests` | 4 | encode/decode round-trip + 空数组 / decode(nil) 返 [] / decode 坏 JSON（截断 / 类型错 / 完全非 JSON）返 []（R32-D，WorkEntryRecord/MeetingRecord 的 recurrenceWeekdays/recurrenceMonthDays 持久化通道，原 R23-G 加的兜底无回归测试） |
 | `IsOverdueTests` | 8 | WorkEntryRecord.isOverdue：done/blocker/planned 无 finishDate 永远 false + planned 昨天 true + planned 今天 false（边界，按 startOfDay 严格 <）/ TodoItemRecord.isOverdue：isDone / dueDate nil / dueDate 过去三分支（R32-E，原 5+ 处 UI 视觉判断无测试钉死） |
 | `ColorHexTests` | 12 | 6 位带 # / 6 位不带 # / 含空白被 trim → 成功；3 位短格式（CSS 标准 #FFF）/ 空串 / 仅 # / 非 hex 字符 / 错误长度（5/7 位）→ 失败（R32-F，TagRecord.swiftUIColor 与 ColorSwatchPicker 的核心解析，原零覆盖，钉死「3 位短格式不支持」语义防误改）+ hexString round-trip（defaultPalette 8 个 + 纯 RGB）+ TagPickerPalette 全可解析 + defaultHex=first 契约（R38-D/H） |
@@ -1063,6 +1063,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `AppearanceModeTests` | 6 | colorScheme 三分支：system→nil（跟随系统）/ light→.light / dark→.dark；localizedName 非空 + 互斥；allCases 覆盖 system+light+dark（R37-D，原 Settings 页外观切换唯一数据源零覆盖，colorScheme 改错整个 app 深浅色错乱） |
 | `AppTabTests` | 6 | 4 tab 的 title / systemImage 非空 + 互斥；allCases 覆盖 4 tab；rawValue 互斥 + 连续 0...3（UserDefaults 持久化 key 保真）（R37-E，原 MainTabView 标签数据源零覆盖，删 case UI 静默缺一项） |
 | `RecordDerivedTests` | 2 | WorkEntryRecord.day / MeetingRecord.day = Calendar.current.startOfDay(for: timestamp)（按天聚合分组键，ExportService / DaySlice / WeeklyReportView 共依赖；R38-L，原零覆盖，改错会让所有按天聚合错位） |
+| `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
+| `RecordMappingTests` | 8 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖） |
 
 R36-A 在已有 `BackupServiceTests` 追加 4 用例（parseISO8601 标准格式 / 带毫秒容错 / 损坏返回 nil / round-trip），BackupServiceTests 用例数 33 → 37。
 R36-C 在已有 `BackupServiceTests` 追加 4 用例（enumerateBackups 目录不存在 / 非 matching prefix/suffix 过滤 / suffixLength 分支 / 无 suffix 分支），BackupServiceTests 用例数 37 → 41。
@@ -1087,6 +1089,15 @@ R38-H 在已有 `ColorHexTests` 追加 2 用例（defaultPalette 全可解析 + 
 R38-I 在已有 `AppStoreTests` 追加 2 用例（deleteEntries/deleteTodos 空数组 no-op），AppStoreTests 用例数 45 → 47。
 R38-J 在已有 `AppDatabaseTests` 追加 1 用例（IntegrityError.description 同时含 label + message + 前缀），AppDatabaseTests 用例数 8 → 9。
 R38-L 新建 `RecordDerivedTests` 2 用例（WorkEntryRecord.day / MeetingRecord.day = startOfDay(for: timestamp)），按天聚合分组键的契约钉死。
+
+R39-A 新建 `NextRecurrenceTests` 3 用例（WorkEntryRecord.nextRecurrenceDate：finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date()）。
+R39-B 在 `NextRecurrenceTests` 追加 2 用例（MeetingRecord.nextFutureOccurrence：daily 推进 / weekly+空 weekdays fallback timestamp），NextRecurrenceTests 用例数 3 → 5。
+R39-C 在已有 `BackupServiceIntegrationTests` 追加 1 用例（snapshotFromMemory 降级路径：6 主表 + 关系映射与 snapshotAtomic 一致），BackupServiceIntegrationTests 用例数 8 → 9。`snapshotFromMemory` 从 private 改 internal 以让单测能直接覆盖降级路径。
+R39-D 新建 `RecordMappingTests` 3 用例（NewWorkEntry.toRecord 字段拷贝 + interval=0/-100 钳为 1 + NewMeeting.toRecord interval=0/-5 钳为 1）。
+R39-E 在 `RecordMappingTests` 追加 5 用例（4 个派生属性 getter 的非法 rawValue fallback + 合法 rawValue round-trip），RecordMappingTests 用例数 3 → 8。
+R39-F 在已有 `AppStoreTests` 追加 2 用例（setReportTags unknown reportId：空 tagIds no-op / 非空 tagIds FK 违规抛错），AppStoreTests 用例数 47 → 49。
+R39-H 抽 `ExportService.todoCSVRow(title:isDone:dueDate:completedAt:createdAt:tags:)` 纯函数（原 25 行 exportTodosCSV 内联），在 `ExportServiceTests` 追加 3 用例（nil 渲染空串 / isDone→"是" / tags 含逗号走 csvEscape），ExportServiceTests 用例数 17 → 20。
+R39-K 在已有 `RecordQueriesTests` 追加参数化测试（TagLinkTable.rawValue 与对应中间表 Record.databaseTableName 字符串相等，4 case），RecordQueriesTests 用例数 10 → 11。
 
 ### 14.2 测试模式约定
 
