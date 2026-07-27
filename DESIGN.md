@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，477 tests / 48 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，499 tests / 52 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，477 tests / 48 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，499 tests / 52 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1079,6 +1079,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `WeekTitleTests` | 5 | WeeklyReportView.weekTitle 标题格式化：「周报 」中文前缀 / isoDay 双端 yyyy-MM-dd / 「 ~ 」分隔符（前后各空格的波浪号，禁用「 - 」）/ 跨月区间（01-29 ~ 02-04 月份补零）/ start==end 单日区间兜底（R45-B，原 private 实例属性零覆盖，抽 `static func weekTitle(start:end:)`；改坏会让标题空字符串或导出文件名缺前缀） |
 | `FilteredEntriesTests` | 7 | HistoryView.filteredEntries 标签+搜索双重过滤：无 filterTag+空 key 放行全部 / 无 filterTag+非空 key 仅按搜索过滤 / filterTag 关系过滤（contains id 比对）/ entry 缺失 tagsByEntry 映射不 crash 视为无 tag / filterTag + searchKey AND 语义（同时满足）/ 大小写不敏感（调用方已小写化 key）/ 空输入返空（R45-C，原 private 实例属性零覆盖，抽 `static func filteredEntries(_:filterTag:tagsByEntry:searchKey:)`；改坏会让筛选条点击无效或看板瞬间变空） |
 | `KindColorTests` | 6 | WorkEntryCard.kindColor 三路颜色派生：done 固定 green（9 组合 priority×status 全参数化）/ planned 用 priority.swiftUIColor 忽略 blockerStatus / blocker 用 blockerStatus.swiftUIColor 忽略 priority / planned 与 blocker 路径互斥性验证（同 priority 不同 status 颜色同 / 同 status 不同 priority 颜色同）/ 三 kind 颜色互不相同（R45-D，原 private 实例属性零覆盖，抽 `static func kindColor(kind:priority:blockerStatus:)`；改坏会让 planned 高优先级不再红色醒目或问题列颜色与状态脱钩） |
+| `WeekEntriesTests` | 6 | WeeklyReportView.weekEntries 半开区间过滤 + belongDate 排序：空输入返空 / 周一 00:00 + 周日任意时间都纳入 / 上周日 23:59 排除（< start）/ 下周一 00:00 排除（半开区间 [start, end+1day) 上界契约，改 <= 会让下周一任务重复进本周）/ belongDate 升序乱序传入验证（done 用 finishDate / blocker 用 timestamp）/ blocker 归属日是 timestamp 非 finishDate（R46-A，原 private 实例属性零覆盖，抽 `static func weekEntries(_:in:)`） |
+| `DayDataTests` | 6 | WeeklyReportView.dayData 单日分组：空输入返 DayData 空内容但保留 day / 半开区间 [day, day+1day) 排除下一天 00:00 / 用 belongDate 而非 timestamp 过滤（done 跨天完成 timestamp 在前一天但 finishDate 在当天 → 纳入当天）/ isDate(_:inSameDayAs:) 匹配 report（report.date 14:30 vs day 00:00 仍命中，防精度漂移漏备注）/ 无匹配返 nil report / tagsByEntry 透传下游 UI（R46-B，原 private 实例方法零覆盖，抽 `static func dayData(_:entries:reports:tagsByEntry:)`） |
+| `NextDefaultColorTests` | 6 | TagPicker.nextDefaultColor 调色板轮选三分支：无使用返 palette[0] / 跳过已用色选下一个未用色 / 跨多个已用色（prefix(4) 后选 palette[4]）/ 非调色板色（用户自定义）不影响选择（仍选 palette[0]）/ 全用过按 count%palette.count 轮转（含 +1 后下一格）/ Set 去重（同色多次使用仍视为已用）（R46-C，原 private 实例方法零覆盖，抽 `static func nextDefaultColor(usedHexes:)`） |
+| `ValidReviewCountTests` | 4 | MeetingFormView.validReviewCount 草稿计数：空输入返 0 / 双空占位行被丢弃（reviewer+opinion 都空）/ 仅 opinion 有值保留（用户只记录意见未署名）/ isBlank（非 isEmpty）判定纯空格/制表符/换行行视为占位行（R46-D，原 private 实例属性零覆盖，抽 `static func validReviewCount(_:)`；与 MeetingCard.validReviews 必须对称，任一方改 isBlank 判定会让 UI 显示数与 DB 实际数分叉） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1149,6 +1153,10 @@ R45-A 新建 `FindDroppedEntryTests` 6 用例（HistoryView.findDroppedEntry 拖
 R45-B 新建 `WeekTitleTests` 5 用例（WeeklyReportView.weekTitle 标题格式化），WeekTitleTests 用例数 0 → 5。原 private 实例属性零覆盖，抽 `static func weekTitle(start:end:)`。覆盖中文「周报 」前缀 + isoDay 双端 + 「 ~ 」分隔符 + 跨月补零 + start==end 兜底。改坏会让标题空字符串或导出文件名缺前缀，用户找不到周报。
 R45-C 新建 `FilteredEntriesTests` 7 用例（HistoryView.filteredEntries 标签+搜索双重过滤），FilteredEntriesTests 用例数 0 → 7。原 private 实例属性零覆盖，抽 `static func filteredEntries(_:filterTag:tagsByEntry:searchKey:)`。覆盖无 filterTag 放行 / 仅搜索 / filterTag 关系过滤 / 缺失映射不 crash / AND 语义 / 大小写不敏感 / 空输入。改坏会让筛选条点击无效（contains 比对整个 TagRecord）或看板瞬间变空。`@MainActor` 标注匹配 SwiftUI View 主线程隔离。
 R45-D 新建 `KindColorTests` 6 用例（WorkEntryCard.kindColor 三路颜色派生），KindColorTests 用例数 0 → 6。原 private 实例属性零覆盖，抽 `static func kindColor(kind:priority:blockerStatus:) -> Color`。覆盖 done 固定 green（9 组合 priority×status 全参数化）/ planned 用 priority 色忽略 status / blocker 用 status 色忽略 priority / 互斥性。改坏会让 planned 高优先级不再红色醒目（用户漏看）或问题列颜色与状态脱钩。
+R46-A 新建 `WeekEntriesTests` 6 用例（WeeklyReportView.weekEntries 半开区间过滤 + belongDate 排序），WeekEntriesTests 用例数 0 → 6。原 private 实例属性零覆盖，抽 `static func weekEntries(_:in:)` 接收 entries + (start, end) 元组。覆盖半开区间 [start, end+1day) 边界（下周一 00:00 排除）+ belongDate 升序 + blocker 用 timestamp。改坏会让下周一任务重复进本周或跨天完成任务错位。`@MainActor` 标注匹配 SwiftUI View 主线程隔离。**注意**：测试构造 range 元组必须用 00:00 时刻（h=0）模拟 weekRange 真实返回值，默认 h=12 会让边界判定错位。
+R46-B 新建 `DayDataTests` 6 用例（WeeklyReportView.dayData 单日分组），DayDataTests 用例数 0 → 6。原 private 实例方法零覆盖，抽 `static func dayData(_:entries:reports:tagsByEntry:)` 接收 day + 已过滤的 entries + reports + tagsByEntry。覆盖半开区间 [day, day+1day) 排除下一天 / belongDate 而非 timestamp 过滤（跨天完成 timestamp 在前一天仍属当天）/ isDate(_:inSameDayAs:) 匹配 report（防精度漂移漏备注）/ tagsByEntry 透传。改坏会让跨天任务塞到两天或备注静默丢失。
+R46-C 新建 `NextDefaultColorTests` 6 用例（TagPicker.nextDefaultColor 调色板轮选），NextDefaultColorTests 用例数 0 → 6。原 private 实例方法零覆盖，抽 `static func nextDefaultColor(usedHexes:)` 接收已用色列表。覆盖三分支：空状态返 palette[0] / 有未用色选第一个未用 / 全用过按 count%palette.count 轮转。含 Set 去重契约（同色多次使用仍视为已用）+ 非调色板色不影响选择。改坏会让连续创建的标签颜色重复或空 palette modulo-by-zero crash。
+R46-D 新建 `ValidReviewCountTests` 4 用例（MeetingFormView.validReviewCount 草稿计数），ValidReviewCountTests 用例数 0 → 4。原 private 实例属性零覆盖，抽 `static func validReviewCount(_:)`。覆盖空输入 / 双空占位行过滤 / 仅 opinion 有效 / isBlank（非 isEmpty）判定纯空格行无效。与 MeetingCard.validReviews（R44-A）必须对称，任一方改判定会让 UI 显示数与 DB 实际数分叉。
 
 ### 14.2 测试模式约定
 

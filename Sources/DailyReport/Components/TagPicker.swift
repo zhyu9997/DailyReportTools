@@ -227,14 +227,22 @@ struct TagPicker: View {
 
     /// 选一个尚未被现有标签使用的调色板色；全用过则按数量轮转
     private func nextDefaultColor() -> String {
+        Self.nextDefaultColor(usedHexes: allTags.map { $0.colorHex })
+    }
+
+    /// 默认色分配的纯函数核心：三分支——空 palette 兜底 defaultHex 防 modulo-by-zero crash /
+    /// 优先选尚未被使用的第一个调色板色 / 全用过按 usedHexes.count % palette.count 轮转。
+    /// R46-C：从 instance 抽 static 让单测可覆盖三分支 + 轮转起点契约。
+    /// 改坏会让连续创建的标签颜色重复（视觉无法区分）或空 palette crash
+    static func nextDefaultColor(usedHexes: [String]) -> String {
         let palette = TagPickerPalette.defaultPalette
         // R30-A：防御未来若把 defaultPalette 改成空数组（编译期不阻止）导致 modulo by zero crash
         guard !palette.isEmpty else { return TagPickerPalette.defaultHex }
-        let used = Set(allTags.map { $0.colorHex })
+        let used = Set(usedHexes)
         for c in palette where !used.contains(c) {
             return c
         }
-        return palette[allTags.count % palette.count]
+        return palette[usedHexes.count % palette.count]
     }
 
     /// 新建表单（popover 内，点取消或外部自动关闭）

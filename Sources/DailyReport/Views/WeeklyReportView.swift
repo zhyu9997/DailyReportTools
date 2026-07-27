@@ -46,12 +46,19 @@ struct WeeklyReportView: View {
     }
 
     private var weekEntries: [WorkEntryRecord] {
-        let r = weekRange
-        let endNext = r.end.addingTimeInterval(.day)
+        Self.weekEntries(entries, in: weekRange)
+    }
+
+    /// 周内任务过滤 + 排序的纯函数核心：按半开区间 [start, end+1day) 过滤（end 是周日 00:00，
+    /// endNext = end + 1 天 = 下周一 00:00，正好把周日全天任务纳入），再按 belongDate 升序。
+    /// R46-A：从 instance 抽 static 让单测可覆盖半开区间边界 + 排序契约。
+    /// 改坏会让下周一 00:00 任务重复进本周（<=）或跨天完成任务错位（用 timestamp 排序）
+    static func weekEntries(_ entries: [WorkEntryRecord], in range: (start: Date, end: Date)) -> [WorkEntryRecord] {
+        let endNext = range.end.addingTimeInterval(.day)
         return entries.filter {
-            let b = Self.belongDate($0)
-            return b >= r.start && b < endNext
-        }.sorted { Self.belongDate($0) < Self.belongDate($1) }
+            let b = belongDate($0)
+            return b >= range.start && b < endNext
+        }.sorted { belongDate($0) < belongDate($1) }
     }
 
     private var weekDays: [Date] {
@@ -59,16 +66,29 @@ struct WeeklyReportView: View {
     }
 
     private func dayData(_ day: Date) -> ExportService.DayData {
+        Self.dayData(day,
+                     entries: weekEntries,
+                     reports: reports,
+                     tagsByEntry: store?.tagsByEntry ?? [:])
+    }
+
+    /// 单日分组的纯函数核心：按半开区间 [day, day+1day) 过滤（day 通常是周一 00:00），
+    /// 再用 isDate(_:inSameDayAs:) 匹配 DailyReportRecord（防 report.date 精度/时区漂移）。
+    /// R46-B：从 instance 抽 static 让单测可覆盖区间边界 + isDate 兜底契约。
+    /// 改坏会让跨天任务塞到两天（<=）或备注静默丢失（report 匹配失败）
+    static func dayData(_ day: Date,
+                        entries: [WorkEntryRecord],
+                        reports: [DailyReportRecord],
+                        tagsByEntry: [UUID: [TagRecord]]) -> ExportService.DayData {
         let cal = Calendar.current
         let next = cal.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(.day)
-        let dayEntries = weekEntries.filter {
-            let b = Self.belongDate($0)
+        let dayEntries = entries.filter {
+            let b = belongDate($0)
             return b >= day && b < next
         }
         // 用 isDate(_:inSameDayAs:) 防御性匹配，未来若 report.date 改了精度/时区不会静默漏
         let report = reports.first { cal.isDate($0.date, inSameDayAs: day) }
-        return .init(day: day, entries: dayEntries, report: report,
-                     tagsByEntry: store?.tagsByEntry ?? [:])
+        return .init(day: day, entries: dayEntries, report: report, tagsByEntry: tagsByEntry)
     }
 
     var body: some View {

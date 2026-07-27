@@ -259,7 +259,15 @@ struct MeetingFormView: View {
     @State private var saveError: String?
 
     private var validReviewCount: Int {
-        reviewDrafts.filter { !$0.reviewer.isBlank || !$0.opinion.isBlank }.count
+        Self.validReviewCount(reviewDrafts)
+    }
+
+    /// 评审草稿有效计数的纯函数核心：过滤掉 reviewer+opinion 双空占位行后计数。
+    /// R46-D：从 instance 抽 static 让单测可覆盖过滤契约。与 MeetingCard.validReviews 必须对称——
+    /// 任一方改 isBlank 判定会让表单标题「评审（N）」与卡片显示数分叉。
+    /// 改坏会让用户看到「评审（3）」但保存后只有 1 条
+    static func validReviewCount(_ drafts: [ReviewDraft]) -> Int {
+        drafts.filter { !$0.reviewer.isBlank || !$0.opinion.isBlank }.count
     }
 
     var body: some View {
