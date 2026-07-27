@@ -11,12 +11,7 @@ struct WeeklyReportView: View {
     private var reports: [DailyReportRecord] { store?.reports ?? [] }
 
     private var weekRange: (start: Date, end: Date) {
-        let cal = Calendar.current
-        let monday = cal.monday(for: weekAnchor).startOfDay
-        // R31-D：Calendar.date(byAdding:) 在极端日历/日期下文档允许返回 nil；
-        // 用 ?? 兜底避免强制解包在罕见路径 crash（用户切非公历日历或异常 weekAnchor 时触发）
-        let sunday = cal.date(byAdding: .day, value: 6, to: monday) ?? monday.addingTimeInterval(6 * .day)
-        return (monday, sunday)
+        Self.weekRange(anchor: weekAnchor)
     }
 
     /// 任务的归属日：完成/计划按 finishDate（实际/计划完成日），问题按发生时间
@@ -30,6 +25,26 @@ struct WeeklyReportView: View {
         }
     }
 
+    /// 周一...周日 区间。R43-B：从 private var 抽 static 让单测可覆盖锚点归一化逻辑
+    /// （cal.monday(for:) 把任意锚点归一到本周一，再 +6 天到周日）
+    static func weekRange(anchor: Date) -> (start: Date, end: Date) {
+        let cal = Calendar.current
+        let monday = cal.monday(for: anchor).startOfDay
+        // R31-D：Calendar.date(byAdding:) 在极端日历/日期下文档允许返回 nil；
+        // 用 ?? 兜底避免强制解包在罕见路径 crash（用户切非公历日历或异常 anchor 时触发）
+        let sunday = cal.date(byAdding: .day, value: 6, to: monday) ?? monday.addingTimeInterval(6 * .day)
+        return (monday, sunday)
+    }
+
+    /// 从周起点（周一）生成 7 天数组。R43-B：抽出便于单测覆盖 nil 兜底契约
+    static func weekDays(start: Date) -> [Date] {
+        let cal = Calendar.current
+        // R31-D：单条 nil 退到 day+1 近似值，整体仍返回 7 个元素保证 UI 不崩
+        return (0..<7).map {
+            cal.date(byAdding: .day, value: $0, to: start) ?? start.addingTimeInterval(TimeInterval($0) * .day)
+        }
+    }
+
     private var weekEntries: [WorkEntryRecord] {
         let r = weekRange
         let endNext = r.end.addingTimeInterval(.day)
@@ -40,11 +55,7 @@ struct WeeklyReportView: View {
     }
 
     private var weekDays: [Date] {
-        let cal = Calendar.current
-        // R31-D：单条 nil 退到 day+1 近似值，整体仍返回 7 个元素保证 UI 不崩
-        return (0..<7).map {
-            cal.date(byAdding: .day, value: $0, to: weekRange.start) ?? weekRange.start.addingTimeInterval(TimeInterval($0) * .day)
-        }
+        Self.weekDays(start: weekRange.start)
     }
 
     private func dayData(_ day: Date) -> ExportService.DayData {

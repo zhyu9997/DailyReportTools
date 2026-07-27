@@ -41,20 +41,35 @@ struct TodayView: View {
     /// R30-C 抽出：原版 body 内 18 行立即执行闭包，三段几乎相同（只换 store 关系映射 + owner 列表）
     private func collectUsedTags(entries: [WorkEntryRecord],
                                  meetings: [MeetingRecord]) -> [TagRecord] {
+        Self.collectUsedTags(entries: entries,
+                              meetings: meetings,
+                              planned: plannedListBase,
+                              tagsByEntry: store?.tagsByEntry ?? [:],
+                              tagsByMeeting: store?.tagsByMeeting ?? [:])
+    }
+
+    /// 今日页面标签栏的来源：聚合「今日记录 + 今日会议 + 计划列表」用到的所有 tag。
+    /// R43-D：从 instance 抽 static 让单测可覆盖去重逻辑。重复 tag 进 UI 会显示两次；
+    /// 漏掉某段会让标签筛选条少标签。三段来源（entries/meetings/planned）按顺序首次出现保留
+    static func collectUsedTags(entries: [WorkEntryRecord],
+                                 meetings: [MeetingRecord],
+                                 planned: [WorkEntryRecord],
+                                 tagsByEntry: [UUID: [TagRecord]],
+                                 tagsByMeeting: [UUID: [TagRecord]]) -> [TagRecord] {
         var seen = Set<UUID>()
         var out: [TagRecord] = []
         for e in entries {
-            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
+            for t in (tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
                 seen.insert(t.id); out.append(t)
             }
         }
         for m in meetings {
-            for t in (store?.tagsByMeeting[m.id] ?? []) where !seen.contains(t.id) {
+            for t in (tagsByMeeting[m.id] ?? []) where !seen.contains(t.id) {
                 seen.insert(t.id); out.append(t)
             }
         }
-        for e in plannedListBase {
-            for t in (store?.tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
+        for e in planned {
+            for t in (tagsByEntry[e.id] ?? []) where !seen.contains(t.id) {
                 seen.insert(t.id); out.append(t)
             }
         }

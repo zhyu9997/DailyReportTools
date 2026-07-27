@@ -52,15 +52,19 @@ struct HistoryView: View {
     }
 
     private func matchesSearch(_ e: WorkEntryRecord) -> Bool {
-        let s = searchKey
-        guard !s.isEmpty else { return true }
-        return e.title.lowercased().contains(s) || e.detail.lowercased().contains(s)
+        Self.matchesSearch(title: e.title, detail: e.detail, key: searchKey)
     }
 
     private func matchesSearch(_ m: MeetingRecord) -> Bool {
-        let s = searchKey
-        guard !s.isEmpty else { return true }
-        return m.topic.lowercased().contains(s) || m.summary.lowercased().contains(s)
+        Self.matchesSearch(title: m.topic, detail: m.summary, key: searchKey)
+    }
+
+    /// 搜索过滤的纯函数核心：空 key 放行；否则 title/detail 任一包含 key（大小写不敏感）。
+    /// R43-A：从两个 instance 重载抽出共享 static，便于单测覆盖 6 个分支。
+    /// 改坏会让看板搜索静默失效（lowercased/contains 顺序错位）或假命中
+    static func matchesSearch(title: String, detail: String, key: String) -> Bool {
+        guard !key.isEmpty else { return true }
+        return title.lowercased().contains(key) || detail.lowercased().contains(key)
     }
 
     private var filtered: [WorkEntryRecord] {

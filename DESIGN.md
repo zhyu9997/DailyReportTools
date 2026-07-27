@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，407 tests / 36 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，428 tests / 40 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，407 tests / 36 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，428 tests / 40 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1067,6 +1067,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `ConvertKindTests` | 7 | HistoryView.convertKind 6 个跨 kind 转换路径 + same-kind no-op：blocker→planned 清 helper+重置 status / done→planned 清 finishDate（防新 planned 因旧完成日立刻 isOverdue 飘红）/ planned→blocker 清 recurring+finishDate（防「周期性 blocker」怪胎 sweep 不推进却仍带 repeat 标记）/ done→blocker 同款清理 / planned→done 走 case .done break 保留字段 / extra 闭包在 kind 转换后执行（R42-A，dropDestination 核心副作用原为 private static 零覆盖） |
 | `TimeLabelTests` | 4 | SettingsView.timeLabel 4 边界：0→"00:00" / 1439→"23:59" / 90→"01:30" / 整点 60→"01:00"、600→"10:00"（R42-D，原 private 实例方法零覆盖，改 static internal 抽出后可单测；改坏会让用户设的 18:30 显示成 06:05 等） |
 | `DeleteMessageTests` | 2 | TodayView.deleteMessage：nil→"" 兜底（List.onDelete race 下可能传 nil）+ non-nil→"「<title>」将被删除。"（R42-E，原 private static 零覆盖，改 internal 抽出后 @MainActor suite 直接覆盖） |
+| `MatchesSearchTests` | 7 | HistoryView.matchesSearch 搜索过滤 6 分支：空 key 放行 / 纯空白放行 / title 命中 / title 大小写不敏感 / detail 命中 / 全未命中 / entry(meeting) 共享逻辑对齐（R43-A，原两个 private 实例重载 WorkEntry/Meeting 零覆盖，抽共享 static `matchesSearch(title:detail:key:)` 后 WorkEntry/Meeting 共用一份逻辑） |
+| `WeekRangeTests` | 5 | WeeklyReportView.weekRange/weekDays 周锚点归一化：周中锚点（周三→本周一...日）/ 周日锚点（firstWeekday=1 仍归上周一，R34-D 钉的契约）/ 区间正好 7 天 / 跨月（02-01 周四→01-29...02-04）/ weekDays 连续 7 天首尾间隔 1 天（R43-B，原 private 实例属性零覆盖，抽 static 后可单测；改坏会让整周聚合错位） |
+| `SnapshotFromDBQueueTests` | 2 | BackupService.snapshotFromDBQueueIfPossible 容错路径：未迁移 schema 的 queue 触发 fetchAll 抛错→catch 分支 return 不写 salvage / 已迁移空 queue→buildSnapshotFromDB 返空 Snapshot→写出 salvage-*.json 可 decode 回空 Snapshot（R43-C，原两个 early-return 分支 read 失败 / snapshot nil 零覆盖，是主库损坏后「数据抢救」链路兜底） |
+| `CollectUsedTagsTests` | 7 | TodayView.collectUsedTags 三段去重（entries + meetings + planned）：空输入 / 单源各段 / 跨源去重（同 tag 三段都有只出一次）/ 首次出现顺序保留（a→b→c 按段顺序）/ entry 缺失 tag 映射不 crash（R43-D，原 private 实例方法零覆盖，抽 static 接收 5 参数 entries/meetings/planned + tagsByEntry/tagsByMeeting；改坏会让标签栏重复或漏 tag） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1124,6 +1128,11 @@ R42-B 在已有 `RecurrenceTests` 追加 3 用例（label 三分支 interval=0/n
 R42-C 在已有 `RecurrenceTests` 追加 3 用例（nextFutureDate 三分支 interval=0/negative 兜底为 1，用「与 interval=1 等价」属性测试避开 Calendar.current 时区差异），RecurrenceTests 用例数 32 → 35。nextFutureDate 内 `let n = max(1, interval)` 是防 division-by-zero 的关键（daily 用 stepSeconds=TimeInterval(n)*.day 算 jumps=Int(elapsed/stepSeconds)，n=0 会触发除零）。
 R42-D 新建 `TimeLabelTests` 4 用例（SettingsView.timeLabel 边界），TimeLabelTests 用例数 0 → 4。`timeLabel` 从 private 实例方法改 static internal（与 R35-B belongDate 同款抽法）。设置页提醒时间显示用，改坏会让用户设的 18:30 显示成 06:05 等（除法/取模顺序错位）。
 R42-E 新建 `DeleteMessageTests` 2 用例（TodayView.deleteMessage nil→"" + non-nil 文案），DeleteMessageTests 用例数 0 → 2。`deleteMessage` 从 private static 改 internal static。删除 alert 文案 helper，改坏会让 alert 显示 "「Optional(...)」将被删除。" 或空 alert。
+
+R43-A 新建 `MatchesSearchTests` 7 用例（HistoryView.matchesSearch 搜索过滤 6 分支 + entry/meeting 共享逻辑），MatchesSearchTests 用例数 0 → 7。原两个 private 实例重载（WorkEntry / Meeting）零覆盖，抽共享 `static func matchesSearch(title:detail:key:)` 后 WorkEntry/Meeting 实例重载改为薄包装。改坏 `lowercased()` 或 `contains` 顺序会让看板搜索静默失效或假命中。
+R43-B 新建 `WeekRangeTests` 5 用例（WeeklyReportView.weekRange/weekDays 周锚点归一化），WeekRangeTests 用例数 0 → 5。原 private 实例属性零覆盖，抽 `static func weekRange(anchor:)` + `static func weekDays(start:)` 后可单测。改坏会让整周聚合错位（任务算到错的周 / weekDays 少一天导致 UI 缺列）。`@MainActor` 标注匹配 SwiftUI View 主线程隔离。
+R43-C 新建 `SnapshotFromDBQueueTests` 2 用例（BackupService.snapshotFromDBQueueIfPossible 容错路径），SnapshotFromDBQueueTests 用例数 0 → 2。用 `backupDirectoryOverride` 注入 tmp 目录隔离文件副作用。覆盖原两个 early-return 分支：未迁移 schema 的 queue 触发 fetchAll 抛错→catch return / 已迁移空 queue→写 salvage JSON 可 decode 回空 Snapshot。是主库损坏后「数据抢救」链路的兜底，原零覆盖。
+R43-D 新建 `CollectUsedTagsTests` 7 用例（TodayView.collectUsedTags 三段去重），CollectUsedTagsTests 用例数 0 → 7。原 private 实例方法零覆盖，抽 `static func collectUsedTags(entries:meetings:planned:tagsByEntry:tagsByMeeting:)` 接收 5 参数。改坏会让今日页面标签栏重复显示 tag 或漏掉某个 tag。
 
 ### 14.2 测试模式约定
 

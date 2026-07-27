@@ -50,7 +50,7 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**407 tests / 36 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**428 tests / 40 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
@@ -73,6 +73,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `ConvertKindTests` (7) | HistoryView.convertKind 跨 kind 拖拽字段清理：same-kind no-op / blocker→planned 清 helper+重置 status / done→planned 清 finishDate（防新 planned 立刻 isOverdue）/ planned/done→blocker 清 recurring+finishDate（防「周期性 blocker」怪胎）/ planned→done case break 保留字段 / extra 闭包后执行（R42-A） |
 | `TimeLabelTests` (4) | SettingsView.timeLabel 边界：0→"00:00" / 1439→"23:59" / 90→"01:30" / 整点无尾分钟（R42-D，原 private 实例方法零覆盖，改 static internal 抽出） |
 | `DeleteMessageTests` (2) | TodayView.deleteMessage nil→空串兜底 + non-nil→"「<title>」将被删除。"（R42-E，原 private static 零覆盖，改 internal 抽出） |
+| `MatchesSearchTests` (7) | HistoryView.matchesSearch 搜索过滤：空 key 放行 / title 命中 / detail 命中 / 大小写不敏感 / 全未命中 / entry 与 meeting 共享逻辑（R43-A，原两个 private 实例重载零覆盖，抽共享 static） |
+| `WeekRangeTests` (5) | WeeklyReportView.weekRange/weekDays 周锚点归一化：周中锚点 / 周日归上周一（firstWeekday=1 仍锁周一）/ 区间正好 7 天 / 跨月 / weekDays 连续 7 天（R43-B，原 private 实例属性零覆盖） |
+| `SnapshotFromDBQueueTests` (2) | BackupService.snapshotFromDBQueueIfPossible 容错路径：未迁移 schema 的 queue 触发 read 抛错→无 salvage / 已迁移空 queue→写出 salvage JSON 可 decode（R43-C，原两个 early-return 分支零覆盖） |
+| `CollectUsedTagsTests` (7) | TodayView.collectUsedTags 三段去重（entries + meetings + planned）：空输入 / 单源 / 跨源去重 / 首次出现顺序 / 缺失 tag 映射不 crash（R43-D，原 private 实例方法零覆盖，抽 static 接收 5 参数） |
 
 View 层不测（SwiftUI 视图组合靠人工验证）。
 
