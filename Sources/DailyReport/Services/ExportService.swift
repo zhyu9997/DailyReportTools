@@ -46,12 +46,10 @@ final class ExportService {
 
     /// 中文星期名（Calendar weekday：1=周日 … 7=周六）。
     /// 注意：双字「周日/周一/…」用于独立展示（XLSX「星期」列）；
-    /// Recurrence.weekdaySymbol 是单字「日/一/…」用于 label 拼接（避免「每周周一」重复），语义不同
+    /// Recurrence.weekdaySymbol 是单字「日/一/…」用于 label 拼接（避免「每周周一」重复），语义不同。
+    /// R34-F：裸 switch 改为调 Recurrence.weekdayLong，数据源与单字版同源
     static func weekdayName(_ d: Date) -> String {
-        switch Calendar.current.component(.weekday, from: d) {
-        case 1: "周日"; case 2: "周一"; case 3: "周二"; case 4: "周三"
-        case 5: "周四"; case 6: "周五"; case 7: "周六"; default: "?"
-        }
+        Recurrence.weekdayLong(Calendar.current.component(.weekday, from: d))
     }
 
     // MARK: XLSX

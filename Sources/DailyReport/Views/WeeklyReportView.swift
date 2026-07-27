@@ -143,8 +143,7 @@ struct WeeklyReportView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.12))
-        .cornerRadius(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.12)))
     }
 
     private func statCard(_ title: String, value: String) -> some View {
@@ -154,8 +153,7 @@ struct WeeklyReportView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(.quaternary.opacity(0.25))
-        .cornerRadius(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(.quaternary.opacity(0.25)))
     }
 
     private func shiftWeek(_ delta: Int) {

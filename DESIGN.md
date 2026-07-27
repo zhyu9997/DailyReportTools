@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，231 tests / 20 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，244 tests / 22 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，231 tests / 20 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，244 tests / 22 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1053,6 +1053,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `IsOverdueTests` | 8 | WorkEntryRecord.isOverdue：done/blocker/planned 无 finishDate 永远 false + planned 昨天 true + planned 今天 false（边界，按 startOfDay 严格 <）/ TodoItemRecord.isOverdue：isDone / dueDate nil / dueDate 过去三分支（R32-E，原 5+ 处 UI 视觉判断无测试钉死） |
 | `ColorHexTests` | 8 | 6 位带 # / 6 位不带 # / 含空白被 trim → 成功；3 位短格式（CSS 标准 #FFF）/ 空串 / 仅 # / 非 hex 字符 / 错误长度（5/7 位）→ 失败（R32-F，TagRecord.swiftUIColor 与 ColorSwatchPicker 的核心解析，原零覆盖，钉死「3 位短格式不支持」语义防误改） |
 | `RecurrenceCapableTests` | 3 | RecurrenceCapable.recurrenceLabel 三分支：未开启 recurring 返回空串 / 单元 + interval 拼接（与 Recurrence.recurrenceLabel 静态函数对齐） / 月度按 monthDays 渲染（R33-A，原 protocol 默认实现零覆盖，调用方 WorkEntryRecord/MeetingRecord 共 2 处） |
+| `StringExtensionsTests` | 8 | isBlank：空串 / 纯空格 / 纯换行（与原 .whitespaces 关键差异）/ 混合空白 / 内容不为空；trimmed：去首尾 / 去换行 Tab / 保留中间空白 / 空串稳定（R34-C，原 25+ 处写入路径作 guard 与清洗的核心 helper 零覆盖，钉死「统一 .whitespacesAndNewlines」语义防回退） |
+| `CalendarMondayTests` | 5 | monday(for:) 五分支：输入即周一 / 周中 / 周日（系统 firstWeekday=1 仍归上一周周一，注释里踩过的坑）/ 跨月 / 跨年（R34-D，BackupService.weekKey 8 个测试已间接覆盖，但 monday(for:) 本身零测试钉死「强制 firstWeekday=2」语义） |
 
 ### 14.2 测试模式约定
 

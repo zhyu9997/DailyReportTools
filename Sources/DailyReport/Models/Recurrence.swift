@@ -14,6 +14,15 @@ enum Recurrence {
         return table[weekday - 1]
     }
 
+    /// weekday 双字版（"周日 / 周一 / …"），用于独立展示（XLSX「星期」列）。
+    /// R34-F 抽出：原版 ExportService.weekdayName 单写一份 switch（裸 case 1...7 + default "?"），
+    /// 与 weekdaySymbol 数据源重复。集中后改字库只动一处；weekdaySymbol 仍保留单字版（label 拼接
+    /// 需要短字符避免「每周周一」重复），两者语义不同故不合并
+    static func weekdayLong(_ weekday: Int) -> String {
+        guard (1...7).contains(weekday) else { return "?" }
+        return "周" + weekdaySymbol(weekday)
+    }
+
     /// 计算下一个未来的触发日（保留 base 的时分）
     static func nextFutureDate(unit: RecurrenceUnit,
                                interval: Int,

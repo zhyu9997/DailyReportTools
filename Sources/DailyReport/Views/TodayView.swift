@@ -292,9 +292,7 @@ struct TodayView: View {
             Text(title).font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(color.opacity(0.1))
-        .overlay(Capsule().stroke(color.opacity(0.25), lineWidth: 1))
-        .clipShape(Capsule())
+        .capsuleChip(color: color, fillOpacity: 0.1, strokeOpacity: 0.25)
     }
 
     @ViewBuilder
@@ -323,9 +321,9 @@ struct TodayView: View {
             Text(title)
                 .font(.caption.weight(isSelected ? .semibold : .regular))
                 .padding(.horizontal, 10).padding(.vertical, 4)
-                .background(isSelected ? color.opacity(0.35) : color.opacity(0.12))
-                .overlay(Capsule().stroke(color.opacity(isSelected ? 0.8 : 0.3), lineWidth: 1))
-                .clipShape(Capsule())
+                .capsuleChip(color: color,
+                              fillOpacity: isSelected ? 0.35 : 0.12,
+                              strokeOpacity: isSelected ? 0.8 : 0.3)
         }
         .buttonStyle(.plain)
     }
@@ -365,7 +363,6 @@ private struct TodayMeetingRow: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.2), lineWidth: 1))
+        .softCard(color: Color.purple, cornerRadius: 8, fillOpacity: 0.06, strokeOpacity: 0.2)
     }
 }

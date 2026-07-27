@@ -121,8 +121,7 @@ struct MeetingCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.2), lineWidth: 1))
+        .softCard(color: Color.accentColor, cornerRadius: 10, fillOpacity: 0.06, strokeOpacity: 0.2)
         .writeErrorAlert($writeError)
     }
 
@@ -143,12 +142,8 @@ struct MeetingCard: View {
                 .help("取消")
             }
             TextEditor(text: $newOpinion)
-                .scrollContentBackground(.hidden)
                 .font(.caption)
-                .frame(minHeight: 38)
-                .padding(4)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+                .textEditorCard(minHeight: 38, padding: 4)
             HStack {
                 Spacer()
                 Button {
@@ -313,12 +308,8 @@ struct MeetingFormView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("会议概要").font(.caption).foregroundStyle(.secondary)
                 TextEditor(text: $summary)
-                    .scrollContentBackground(.hidden)
                     .font(.body)
-                    .frame(minHeight: 70)
-                    .padding(6)
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+                    .textEditorCard(minHeight: 70)
             }
 
             TagPicker(selected: $selectedTags)
@@ -365,12 +356,8 @@ struct MeetingFormView: View {
                 }
             }
             TextEditor(text: draft.opinion)
-                .scrollContentBackground(.hidden)
                 .font(.body)
-                .frame(minHeight: 50)
-                .padding(6)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
+                .textEditorCard(minHeight: 50)
         }
         .padding(10)
         .background {

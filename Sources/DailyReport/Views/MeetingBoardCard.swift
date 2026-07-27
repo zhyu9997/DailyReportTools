@@ -68,8 +68,7 @@ struct MeetingBoardCard: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Self.meetingColor.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Self.meetingColor.opacity(0.25), lineWidth: 1))
+        .softCard(color: Self.meetingColor, cornerRadius: 8, fillOpacity: 0.08, strokeOpacity: 0.25)
         .contentShape(Rectangle())
         .help("点击编辑 · 在「会议纪要」中打开")
     }

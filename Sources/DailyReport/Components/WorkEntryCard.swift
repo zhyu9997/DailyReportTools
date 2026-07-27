@@ -45,8 +45,7 @@ struct WorkEntryCard: View {
             if editing { editor } else { display }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(kindColor.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(kindColor.opacity(0.3), lineWidth: 1))
+        .softCard(color: kindColor, cornerRadius: 10, fillOpacity: 0.08, strokeOpacity: 0.3)
         .contentShape(Rectangle())
         .draggable(entry.id.uuidString)
         .alert("删除这条任务？", isPresented: $showDeleteConfirm) {
