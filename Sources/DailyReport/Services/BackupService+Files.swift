@@ -175,9 +175,19 @@ extension BackupService {
                                               prefix: String,
                                               suffixLength: Int = 0) -> [BackupEntry] {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: directory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: [.skipsHiddenFiles]) else { return [] }
+        // R28-C：原版 try? 把「目录不存在」与「读权限被拒」都降级为 []，让上层判断「无备份」误判
+        // （如 weeklyWrittenToday 返回 false 导致同日重复写）。区分：不存在是正常路径返回 []；
+        // 读失败 warn 后返回 []，至少留下日志信号
+        guard fm.fileExists(atPath: directory.path) else { return [] }
+        let files: [URL]
+        do {
+            files = try fm.contentsOfDirectory(at: directory,
+                                                includingPropertiesForKeys: nil,
+                                                options: [.skipsHiddenFiles])
+        } catch {
+            AppLogger.warn("enumerateBackups 读取目录失败 \(directory.path) prefix=\(prefix)：\(error.localizedDescription)")
+            return []
+        }
         let header = "\(prefix)-"
         var entries: [BackupEntry] = []
         for f in files {

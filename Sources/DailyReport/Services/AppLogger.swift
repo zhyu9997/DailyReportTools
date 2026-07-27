@@ -67,7 +67,15 @@ enum AppLogger {
                 }
             }
             // 旧目录若已空则删掉，保持 db/ 整洁
-            let remaining = (try? fm.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: nil)) ?? []
+            // R28-B：原版 `try? ... ?? []` 把「读失败」降级为「空目录」误删用户日志目录。
+            // 改为 do/catch：读失败时 warn 并保留目录（不误删）；只有真能读且为空才删
+            let remaining: [URL]
+            do {
+                remaining = try fm.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: nil)
+            } catch {
+                AppLogger.warn("读取旧日志目录判空失败 \(oldDir.path)：\(error.localizedDescription)（保留目录不删）")
+                return
+            }
             if remaining.isEmpty {
                 do { try fm.removeItem(at: oldDir) }
                 catch { AppLogger.warn("清理空旧日志目录失败 \(oldDir.path)：\(error.localizedDescription)") }
@@ -141,22 +149,27 @@ enum AppLogger {
 
     /// 滚动检查：文件超过 maxBytes 时，把 app.log → app.log.1，依次后挪；最老的删除
     /// 参数化以便单测（生产路径用 static let 默认值；测试可传小的 maxBytes 立即触发滚动）
+    /// R28-A：原版 3 处 try? 静默吞错（removeItem + 2 处 moveItem）。磁盘满 / 权限不足时
+    /// 轮转失败但无信号，旧日志悄悄堆积且后续写入仍打到超大文件。改为 do/catch + warn
     nonisolated static func rollIfNeeded(url: URL, maxBytes: Int64, keepCount: Int) {
         let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: url.path),
               let size = attrs[.size] as? Int64, size > maxBytes else { return }
         // 保留 app.log + app.log.1 .. app.log.(keepCount-1)，最老的直接删除
         let oldest = URL(fileURLWithPath: url.path + ".\(keepCount - 1)")
-        try? fm.removeItem(at: oldest)
+        do { try fm.removeItem(at: oldest) }
+        catch { warn("rollIfNeeded 删除最老归档失败（\(oldest.path)）：\(error.localizedDescription)") }
         for i in stride(from: keepCount - 2, through: 1, by: -1) {
             let cur = URL(fileURLWithPath: url.path + ".\(i)")
             let nxt = URL(fileURLWithPath: url.path + ".\(i + 1)")
             if fm.fileExists(atPath: cur.path) {
-                try? fm.moveItem(at: cur, to: nxt)
+                do { try fm.moveItem(at: cur, to: nxt) }
+                catch { warn("rollIfNeeded 后挪失败（\(cur.path) → \(nxt.path)）：\(error.localizedDescription)") }
             }
         }
         let first = URL(fileURLWithPath: url.path + ".1")
-        try? fm.moveItem(at: url, to: first)
+        do { try fm.moveItem(at: url, to: first) }
+        catch { warn("rollIfNeeded 主日志后挪失败（\(url.path) → \(first.path)）：\(error.localizedDescription)") }
     }
 
     private static func timestamp() -> String {

@@ -26,13 +26,6 @@ enum WorkKind: String, Codable, CaseIterable, Identifiable {
         case .blocker:  "exclamationmark.triangle.fill"
         }
     }
-    var color: String {
-        switch self {
-        case .done:     "green"
-        case .planned:  "blue"
-        case .blocker:  "orange"
-        }
-    }
     var swiftUIColor: Color {
         switch self {
         case .done:     .green

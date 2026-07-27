@@ -571,6 +571,34 @@ import GRDB
         #expect(afterSecond?.finishDate == firstFinishDate)
     }
 
+    // R28-F：blocker→done 路径无测试覆盖。
+    // markEntryDone 的事务内重 fetch + current.kind != .done 守卫针对多窗口并发，
+    // 现有测试只覆盖 planned→done 的克隆分支，blocker（非周期性）→ done 的「原地降级」未验证
+
+    @Test func markEntryDoneBlockerLandsInPlaceWithoutClone() async throws {
+        let store = try Self.makeStore()
+        let tag = try store.insertTag(NewTag(name: "t", colorHex: "#000000"))
+        let entry = try store.insertEntry(NewWorkEntry(
+            title: "B", detail: "blocking", timestamp: Date(), kind: .blocker,
+            tagIds: [tag.id], finishDate: nil, helper: nil,
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [],
+            blockerStatus: .ongoing, priority: .high
+        ))
+
+        // 非周期性 blocker 调 markEntryDone：不应克隆（isRecurring=false），应原地变 done
+        let spawned = try store.markEntryDone(entry.id)
+        #expect(spawned == nil)
+
+        // 原记录 kind 变 done，finishDate 被设置，tags 关系保留（不被 CASCADE 误删）
+        let after = store.entries.first(where: { $0.id == entry.id })
+        #expect(after?.kind == .done)
+        #expect(after?.finishDate != nil)
+        #expect(store.tagsByEntry[entry.id]?.map(\.id) == [tag.id])
+        // 不应多出克隆记录
+        #expect(store.entries.count == 1)
+    }
+
     // MARK: - vacuum 错误路径
 
     @Test func vacuumOnReadOnlyQueueThrows() async throws {

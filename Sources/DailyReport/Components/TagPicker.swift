@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// 标签默认调色板（R28-E 抽出）。
+/// 原版 TagPicker.palette 与 ColorSwatchPicker.palette 各写一份硬编码颜色列表，
+/// 增删颜色必须同步两处，容易漏改导致两处色板不一致。集中到一处常量后改动一处即生效
+enum TagPickerPalette {
+    static let defaultPalette = [
+        "#4A90D9", "#7BBD5B", "#E8743B", "#D34A4A",
+        "#9B59B6", "#F2C037", "#1AB5A4", "#555555"
+    ]
+}
+
 struct TagPicker: View {
     @Binding var selected: [TagRecord]
     var allowCreate: Bool = true
@@ -212,11 +222,8 @@ struct TagPicker: View {
         }
     }
 
-    /// 默认配色板（与 ColorSwatchPicker 一致）
-    private static let palette = [
-        "#4A90D9", "#7BBD5B", "#E8743B", "#D34A4A",
-        "#9B59B6", "#F2C037", "#1AB5A4", "#555555"
-    ]
+    /// 默认配色板（与 ColorSwatchPicker 共用 TagPickerPalette.defaultPalette）
+    private static var palette: [String] { TagPickerPalette.defaultPalette }
 
     /// 选一个尚未被现有标签使用的调色板色；全用过则按数量轮转
     private func nextDefaultColor() -> String {
@@ -282,10 +289,7 @@ struct ColorSwatchPicker: View {
     @Binding var hex: String
     @State private var showPopover = false
 
-    private let palette = [
-        "#4A90D9", "#7BBD5B", "#E8743B", "#D34A4A",
-        "#9B59B6", "#F2C037", "#1AB5A4", "#555555"
-    ]
+    private var palette: [String] { TagPickerPalette.defaultPalette }
 
     var body: some View {
         Button { showPopover = true } label: {
