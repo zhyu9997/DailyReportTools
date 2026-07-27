@@ -118,6 +118,30 @@ import GRDB
         #expect(readme.contains(reason))
     }
 
+    @Test func archiveCorruptedDBReturnsNilWhenArchiveParentIsFile() throws {
+        // R26-F：失败路径覆盖。`corrupted/` 已被占用为普通文件时，createDirectory 与 moveItem
+        // 都会失败。函数应吞掉错误（仅记 log）、不崩溃、返回 nil；源 db 三件套保留在原位。
+        // 关键断言：archivedURL 不被错误地设置为 dst（R23-B 修复点），源文件未被移动。
+        let dir = Self.makeTmpDir()
+        let dbURL = dir.appendingPathComponent("db.sqlite")
+        try Self.touch("db.sqlite", in: dir, content: "main")
+        try Self.touch("db.sqlite-wal", in: dir, content: "wal")
+        // 故意把 corrupted/ 占用为普通文件（极端但合法：用户误操作 / 残留）
+        try Self.touch("corrupted", in: dir, content: "blocker")
+
+        let archived = AppDatabase.archiveCorruptedDB(at: dbURL, reason: "blocked")
+        #expect(archived == nil)
+
+        // 源文件三件套仍在原位（moveItem 全部失败，没有半完成状态）
+        #expect(FileManager.default.fileExists(atPath: dbURL.path))
+        #expect(FileManager.default.fileExists(atPath: dbURL.path + "-wal"))
+        // corrupted 仍是普通文件，未被改造成目录
+        var isDir: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("corrupted").path,
+                                                isDirectory: &isDir))
+        #expect(isDir.boolValue == false)
+    }
+
     // MARK: - pruneCorruptedArchives
 
     @Test func pruneCorruptedArchivesKeepsNewestN() throws {

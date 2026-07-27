@@ -5,37 +5,26 @@ import SwiftUI
 // MARK: - Enum DatabaseValueConvertible
 // 沿用 rawValue 字符串存储，与原 SwiftData 完全一致，Importer 无需翻译
 
-extension WorkKind: DatabaseValueConvertible {
+/// 字符串 rawValue 枚举的 GRDB DatabaseValueConvertible 一行接入。
+/// R26-G 抽出：原版 4 个枚举（WorkKind/BlockerStatus/RecurrenceUnit/Priority）各写一份
+/// 完全相同的 `databaseValue { rawValue.databaseValue }` + `fromDatabaseValue { rawValue 初始化 }`
+/// 模板。改为：枚举声明 `: String` 后，一行 `extension X: RawStringDatabaseValueConvertible {}` 即接入。
+/// 改一处（如未来想把 rawValue 编码改 JSON）只动 protocol extension，4 个枚举自动跟随。
+protocol RawStringDatabaseValueConvertible: RawRepresentable, DatabaseValueConvertible
+    where RawValue == String {}
+
+extension RawStringDatabaseValueConvertible {
     public var databaseValue: DatabaseValue { rawValue.databaseValue }
-    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> WorkKind? {
+    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> Self? {
         guard let s = String.fromDatabaseValue(dbValue) else { return nil }
-        return WorkKind(rawValue: s)
+        return Self(rawValue: s)
     }
 }
 
-extension BlockerStatus: DatabaseValueConvertible {
-    public var databaseValue: DatabaseValue { rawValue.databaseValue }
-    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> BlockerStatus? {
-        guard let s = String.fromDatabaseValue(dbValue) else { return nil }
-        return BlockerStatus(rawValue: s)
-    }
-}
-
-extension RecurrenceUnit: DatabaseValueConvertible {
-    public var databaseValue: DatabaseValue { rawValue.databaseValue }
-    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> RecurrenceUnit? {
-        guard let s = String.fromDatabaseValue(dbValue) else { return nil }
-        return RecurrenceUnit(rawValue: s)
-    }
-}
-
-extension Priority: DatabaseValueConvertible {
-    public var databaseValue: DatabaseValue { rawValue.databaseValue }
-    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> Priority? {
-        guard let s = String.fromDatabaseValue(dbValue) else { return nil }
-        return Priority(rawValue: s)
-    }
-}
+extension WorkKind: RawStringDatabaseValueConvertible {}
+extension BlockerStatus: RawStringDatabaseValueConvertible {}
+extension RecurrenceUnit: RawStringDatabaseValueConvertible {}
+extension Priority: RawStringDatabaseValueConvertible {}
 
 // MARK: - [Int] JSON 序列化 helper（不直接 conform Array 到 GRDB 协议，避免父协议 conformance 不传播）
 

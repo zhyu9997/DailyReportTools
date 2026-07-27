@@ -54,7 +54,11 @@ struct DailyReportApp: App {
             .appendingPathComponent(".swiftdata_warned")
         if fm.fileExists(atPath: warnedURL.path) { return }
         AppLogger.info("⚠️ 检测到旧 SwiftData 库已废弃：\(legacyStore.path)；数据已迁移到 GRDB，可手动删除整个目录 \(legacyDir.path)")
-        fm.createFile(atPath: warnedURL.path, contents: nil)
+        // R26-A：createFile 失败（磁盘只读/权限）时若不感知，每次启动都会重复打上面那条 info
+        // 撑大 app.log。失败时打 warn 让用户/开发者能从日志查到根因
+        if !fm.createFile(atPath: warnedURL.path, contents: nil) {
+            AppLogger.warn("无法写迁移告警标志位 \(warnedURL.path)，下次启动会重复告警")
+        }
     }
 
     var body: some Scene {

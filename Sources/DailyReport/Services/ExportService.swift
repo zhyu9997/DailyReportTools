@@ -138,10 +138,7 @@ final class ExportService {
 
     /// 用户取消保存面板：静默返回（不抛错）；写盘失败：抛错给调用方弹 alert
     private func save(filename: String, content: String) throws {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = filename
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = NSSavePanel.runForSave(filename: filename) else { return }
         do {
             try content.write(to: url, atomically: true, encoding: .utf8)
             NSSound.beep()
@@ -156,10 +153,7 @@ final class ExportService {
         var all: [[String]] = [header]
         all.append(contentsOf: rows)
         let data = XLSXWriter(sheetName: sheetName, rows: all).data()
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = filename
-        panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let url = NSSavePanel.runForSave(filename: filename) else { return }
         do {
             try data.write(to: url, options: .atomic)
             NSSound.beep()

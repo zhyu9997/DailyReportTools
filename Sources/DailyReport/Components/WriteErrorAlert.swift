@@ -17,9 +17,10 @@ import SwiftUI
 /// ```
 struct WriteErrorAlertModifier: ViewModifier {
     @Binding var message: String?
+    var title: String
 
     func body(content: Content) -> some View {
-        content.alert("写入失败", isPresented: Binding(
+        content.alert(title, isPresented: Binding(
             get: { message != nil },
             set: { if !$0 { message = nil } }
         )) {
@@ -31,10 +32,10 @@ struct WriteErrorAlertModifier: ViewModifier {
 }
 
 extension View {
-    /// 把 `@State var writeError: String?` 挂到统一的「写入失败」alert。
-    /// 详见 `WriteErrorAlertModifier`。
-    func writeErrorAlert(_ message: Binding<String?>) -> some View {
-        modifier(WriteErrorAlertModifier(message: message))
+    /// 把 `@State var writeError: String?` 挂到统一的 alert。
+    /// - Parameter title: alert 标题，默认「写入失败」；导出/保存等场景可传「导出失败」「保存失败」等
+    func writeErrorAlert(_ message: Binding<String?>, title: String = "写入失败") -> some View {
+        modifier(WriteErrorAlertModifier(message: message, title: title))
     }
 }
 

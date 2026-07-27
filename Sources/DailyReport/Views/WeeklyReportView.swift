@@ -96,14 +96,7 @@ struct WeeklyReportView: View {
                     weekAnchor = Date()
                 }
             }
-            .alert("导出失败", isPresented: Binding(
-                get: { exportError != nil },
-                set: { if !$0 { exportError = nil } }
-            )) {
-                Button("好", role: .cancel) { exportError = nil }
-            } message: {
-                Text(exportError ?? "")
-            }
+            .writeErrorAlert($exportError, title: "导出失败")
         }
     }
 

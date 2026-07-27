@@ -180,14 +180,7 @@ struct SettingsView: View {
         } message: {
             Text("确定要从 JSON 恢复吗？当前所有数据将被替换。建议先「导出」做一次当前快照。")
         }
-        .alert("操作失败", isPresented: Binding(
-            get: { actionError != nil },
-            set: { if !$0 { actionError = nil } }
-        )) {
-            Button("好") { actionError = nil }
-        } message: {
-            Text(actionError ?? "")
-        }
+        .writeErrorAlert($actionError, title: "操作失败")
         .alert("完成", isPresented: Binding(
             get: { actionSuccess != nil },
             set: { if !$0 { actionSuccess = nil } }
@@ -218,10 +211,7 @@ struct SettingsView: View {
         let snap = BackupService.snapshotAtomic(in: store)
         do {
             let data = try BackupService.encode(snap)
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = "DailyReport-Backup-\(Date().isoDay).json"
-            panel.canCreateDirectories = true
-            guard panel.runModal() == .OK, let url = panel.url else { return }
+            guard let url = NSSavePanel.runForSave(filename: "DailyReport-Backup-\(Date().isoDay).json") else { return }
             try data.write(to: url, options: .atomic)
             actionSuccess = "已导出快照到 \(url.lastPathComponent)"
         } catch {

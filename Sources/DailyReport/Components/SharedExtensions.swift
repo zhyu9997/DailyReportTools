@@ -124,3 +124,18 @@ extension Calendar {
         return self.date(from: comps) ?? date
     }
 }
+
+// MARK: - NSSavePanel helper
+extension NSSavePanel {
+    /// 配置默认保存面板并 runModal，返回用户选中的 URL；用户取消返回 nil。
+    /// R26-C 抽出：ExportService.save / writeXLSX / SettingsView.exportJSON 三处复制粘贴
+    /// 「new + nameFieldStringValue + canCreateDirectories + runModal + guard」样板
+    @MainActor
+    static func runForSave(filename: String) -> URL? {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = filename
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+}

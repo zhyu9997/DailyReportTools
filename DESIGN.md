@@ -112,7 +112,7 @@ Sources/DailyReport/
 │   ├── BadgeChip.swift            # 统一胶囊徽章（Priority/Blocker/Overdue/Recurrence/Tag，R23-E 13+ 处去重）
 │   ├── TagPicker.swift            # 完整版 + 紧凑版 + ColorSwatchPicker
 │   ├── TagFilterMenu.swift        # 顶部标签筛选下拉菜单（R19 从 HistoryView 抽出复用）
-│   ├── WriteErrorAlert.swift      # ViewModifier：统一 .writeErrorAlert + 共享 performWrite helper（R20/R23-D）
+│   ├── WriteErrorAlert.swift      # ViewModifier：统一 .writeErrorAlert（R26-E 加 title 参数）+ 共享 performWrite helper（R20/R23-D）
 │   ├── NewEntryDraft.swift        # @Bindable 草稿：HistoryView/MenuPanelView 共用（R19 抽出）
 │   ├── InlineSummaryEditor.swift  # 会议概要内联编辑器（R21-C 抽出，3 处复用，Style 参数化样式）
 │   ├── KindPicker.swift           # 完成/计划/问题 三色胶囊
@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，189 tests / 13 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，190 tests / 13 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，189 tests / 13 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，190 tests / 13 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1037,7 +1037,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `MigratorTests` | 9 | v1→v2 dedup（保最早 createdAt、合并非空 note、迁移 tag 关系）+ UNIQUE 约束生效；no-op on clean v1；v3 扩展性 + 幂等性 + 索引回归；v4 tag.name dedup（保最早 createdAt、4 张中间表关系 INSERT OR IGNORE 迁移 + 显式清理 dangling）+ v4 no-op on clean database（R22-A）；v5 review UNIQUE(meetingId, order) 按 createdAt 升序 renumber + no-op on clean database（R23-A） |
 | `BackupServiceTests` | 33 | weekKey 计算（周一锚点 + R25-G 补 Tue/Wed/Thu + 跨月/跨年边界）+ 各类 backup 文件存在性 + prune 策略 + decode 高版本/坏 JSON 拒绝 + Snapshot round-trip + decode 加固（payloadTooLarge / danglingTagReference 拒绝 + 自一致 snapshot 通过）（R22-A） |
 | `BackupServiceIntegrationTests` | 8 | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + encode/decode 保留 recurrence 字段 + weeklyBackupIfDue 窗口判定（周四跳 / 周五写 / 同周幂等 / 写失败返回 false）（R24-G） |
-| `AppDatabaseTests` | 7 | archiveCorruptedDB 三文件归档 + 缺源 no-op + 同秒碰撞后缀 + README 写入；pruneCorruptedArchives 保留最近 N + 数量不足 no-op + 目录缺失 no-op（R23-C） |
+| `AppDatabaseTests` | 8 | archiveCorruptedDB 三文件归档 + 缺源 no-op + 同秒碰撞后缀 + README 写入 + **corrupted/ 被占用为文件时的失败路径**（R26-F）；pruneCorruptedArchives 保留最近 N + 数量不足 no-op + 目录缺失 no-op（R23-C） |
 | `RecurrenceServiceTests` | 15 | sweepMeetings/sweepWorkEntries 各场景（逾期推进 / 今天保留 / 一次性会议保留 / 同主题残留清理）+ markDone 克隆下一期 / blocker → done / 已 done 的 race no-op + 月度周期跨月边界（R21-A）+ cleanupExpiry 保留分支（summary 非空 / review 非空）（R25-F） |
 | `RecurrenceTests` | 21 | daily/weekly/monthly 单元计算 + interval>1 跳跃 + 月末 component overflow 防御 + label 文案 |
 | `XLSXWriterTests` | 19 | XML 转义（4 实体 + 边界）+ 列字母转换（A-Z / AA-ZZ / AAA-ZZZ）+ CRC32 标准向量 |

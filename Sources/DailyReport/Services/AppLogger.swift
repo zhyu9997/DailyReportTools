@@ -50,19 +50,25 @@ enum AppLogger {
         let oldDir = AppDatabase.rootDirectory.appendingPathComponent("logs", isDirectory: true)
         let newDir = logFileURL.deletingLastPathComponent()
         guard fm.fileExists(atPath: oldDir.path) else { return }
-        guard let oldFiles = try? fm.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: nil) else { return }
-        // 新目录已存在 app.log 视为已迁移
-        if fm.fileExists(atPath: logFileURL.path) { return }
-        for src in oldFiles where src.lastPathComponent.hasPrefix("app.log") {
-            let dst = newDir.appendingPathComponent(src.lastPathComponent)
-            if !fm.fileExists(atPath: dst.path) {
-                try? fm.moveItem(at: src, to: dst)
+        do {
+            let oldFiles = try fm.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: nil)
+            // 新目录已存在 app.log 视为已迁移
+            if fm.fileExists(atPath: logFileURL.path) { return }
+            for src in oldFiles where src.lastPathComponent.hasPrefix("app.log") {
+                let dst = newDir.appendingPathComponent(src.lastPathComponent)
+                if !fm.fileExists(atPath: dst.path) {
+                    do { try fm.moveItem(at: src, to: dst) }
+                    catch { AppLogger.warn("迁移旧日志失败 \(src.path) → \(dst.path)：\(error.localizedDescription)") }
+                }
             }
-        }
-        // 旧目录若已空则删掉，保持 db/ 整洁
-        let remaining = (try? fm.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: nil)) ?? []
-        if remaining.isEmpty {
-            try? fm.removeItem(at: oldDir)
+            // 旧目录若已空则删掉，保持 db/ 整洁
+            let remaining = (try? fm.contentsOfDirectory(at: oldDir, includingPropertiesForKeys: nil)) ?? []
+            if remaining.isEmpty {
+                do { try fm.removeItem(at: oldDir) }
+                catch { AppLogger.warn("清理空旧日志目录失败 \(oldDir.path)：\(error.localizedDescription)") }
+            }
+        } catch {
+            AppLogger.warn("迁移旧日志目录不可读 \(oldDir.path)：\(error.localizedDescription)")
         }
     }
 

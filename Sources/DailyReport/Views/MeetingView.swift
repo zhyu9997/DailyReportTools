@@ -285,14 +285,7 @@ struct MeetingFormView: View {
         }
         .frame(width: 560)
         .onAppear { syncDraft() }
-        .alert("保存失败", isPresented: Binding(
-            get: { saveError != nil },
-            set: { if !$0 { saveError = nil } }
-        )) {
-            Button("好", role: .cancel) { saveError = nil }
-        } message: {
-            Text(saveError ?? "")
-        }
+        .writeErrorAlert($saveError, title: "保存失败")
     }
 
     private var content: some View {
