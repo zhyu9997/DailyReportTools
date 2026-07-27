@@ -125,7 +125,14 @@ struct WeeklyReportView: View {
     }
 
     private var weekTitle: String {
-        "周报 \(weekRange.start.isoDay) ~ \(weekRange.end.isoDay)"
+        Self.weekTitle(start: weekRange.start, end: weekRange.end)
+    }
+
+    /// 周报标题的纯函数核心：「周报 {start.isoDay} ~ {end.isoDay}」格式拼接。
+    /// R45-B：从 instance computed property 抽 static 让单测可覆盖格式契约 + isoDay 兜底。
+    /// 改坏会让标题显示成空字符串或导出文件名生成时缺前缀，用户找不到周报
+    static func weekTitle(start: Date, end: Date) -> String {
+        "周报 \(start.isoDay) ~ \(end.isoDay)"
     }
 
     private var header: some View {

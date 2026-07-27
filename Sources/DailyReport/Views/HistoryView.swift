@@ -69,12 +69,25 @@ struct HistoryView: View {
     }
 
     private var filtered: [WorkEntryRecord] {
-        allEntries.filter { e in
+        Self.filteredEntries(allEntries,
+                              filterTag: filterTag,
+                              tagsByEntry: store?.tagsByEntry ?? [:],
+                              searchKey: searchKey)
+    }
+
+    /// 标签 + 搜索双重过滤的纯函数核心：无 filterTag 时放行全部；否则按 tagsByEntry 关系过滤；
+    /// 再叠加 matchesSearch（空 key 放行）。R45-C：从 instance computed property 抽 static。
+    /// 改坏会让筛选条点击无效（contains 写错比对整个 TagRecord）或看板瞬间变空（空数组兜底漏）
+    static func filteredEntries(_ entries: [WorkEntryRecord],
+                                 filterTag: TagRecord?,
+                                 tagsByEntry: [UUID: [TagRecord]],
+                                 searchKey: String) -> [WorkEntryRecord] {
+        entries.filter { e in
             let tagOK: Bool = {
                 guard let t = filterTag else { return true }
-                return (store?.tagsByEntry[e.id] ?? []).contains { $0.id == t.id }
+                return (tagsByEntry[e.id] ?? []).contains { $0.id == t.id }
             }()
-            return tagOK && matchesSearch(e)
+            return tagOK && matchesSearch(title: e.title, detail: e.detail, key: searchKey)
         }
     }
 
@@ -291,8 +304,15 @@ struct HistoryView: View {
     /// 4 处 dropDestination 闭包开头都是 `dropped.first → UUID → allEntries lookup` 三连，
     /// payload 非法或 entry 不存在时返回 nil（调用方返回 false 表示拒绝 drop）
     private func findDroppedEntry(from dropped: [String]) -> WorkEntryRecord? {
+        Self.findDroppedEntry(from: dropped, in: allEntries)
+    }
+
+    /// 拖放 payload 解析的纯函数核心：[String] → first → UUID → entries lookup。
+    /// R45-A：从 instance 抽 static 让单测可覆盖三步兜底（空数组 / 非法 UUID / entry 不存在）。
+    /// 改坏会让看板拖放静默拒绝（用户以为拖放坏了实际是数据过期）或假成功（写入空操作）
+    static func findDroppedEntry(from dropped: [String], in entries: [WorkEntryRecord]) -> WorkEntryRecord? {
         guard let str = dropped.first, let id = UUID(uuidString: str) else { return nil }
-        return allEntries.first(where: { $0.id == id })
+        return entries.first(where: { $0.id == id })
     }
 
     /// 计划列：按优先级分组渲染，组头可折叠，整组可作拖放目标

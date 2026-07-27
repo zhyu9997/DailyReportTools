@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，453 tests / 44 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，477 tests / 48 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，453 tests / 44 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，477 tests / 48 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1075,6 +1075,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `SummaryStatsTests` | 5 | TodayView.summaryStats 概要统计：空输入 rate=0 防除零 / 三类计数各自独立 / 会议数不计入完成率 total / 完成率 = done/total / 全计划无完成时 rate=0（R44-B，原内联在 statBar ViewBuilder 零覆盖，抽 `static func summaryStats(entries:meetings:) -> SummaryStats`；改坏会除零 crash 或统计条数字与列表不一致） |
 | `BoardItemTests` | 9 | HistoryView.BoardItem 派生属性：id（entry.id / meeting.id）/ sortDate（任务取 finishDate ?? timestamp，会议固定 timestamp）/ priorityOf（任务取自身 priority，会议固定 medium）/ statusOf（任务取自身 blockerStatus，会议固定 ongoing）三路派生参数化全 case（R44-C，原 private enum + private instance 方法零覆盖，BoardItem 改 internal + 两个 helper 改 static；改坏会让计划列分组错位或状态分组混入会议） |
 | `PlannedColumnSortTests` | 5 | HistoryView.sortPlannedColumn 复合排序：空输入 / 优先级 sortOrder 升序（low/high/medium→high/medium/low）/ 同优先级按 sortDate 升序 / 优先级主导时间（高优晚时仍排前）/ 会议默认 medium 与 medium 任务同组按时间（R44-D，原内联在 columnItems 闭包零覆盖，抽 `static func sortPlannedColumn(_:)`；改坏会让高优先级沉底或逾期任务被掩盖） |
+| `FindDroppedEntryTests` | 6 | HistoryView.findDroppedEntry 拖放 payload 解析：空数组返 nil / 非法 UUID 字符串返 nil（含空串）/ 合法 UUID 命中对应 entry / UUID 合法但 entry 不在列表返 nil（数据过期场景）/ 只看 payload first 元素忽略其余 / entries 空列表不 crash（R45-A，原 private 实例方法零覆盖，抽 `static func findDroppedEntry(from:in:)`；改坏会让拖放静默拒绝或假成功） |
+| `WeekTitleTests` | 5 | WeeklyReportView.weekTitle 标题格式化：「周报 」中文前缀 / isoDay 双端 yyyy-MM-dd / 「 ~ 」分隔符（前后各空格的波浪号，禁用「 - 」）/ 跨月区间（01-29 ~ 02-04 月份补零）/ start==end 单日区间兜底（R45-B，原 private 实例属性零覆盖，抽 `static func weekTitle(start:end:)`；改坏会让标题空字符串或导出文件名缺前缀） |
+| `FilteredEntriesTests` | 7 | HistoryView.filteredEntries 标签+搜索双重过滤：无 filterTag+空 key 放行全部 / 无 filterTag+非空 key 仅按搜索过滤 / filterTag 关系过滤（contains id 比对）/ entry 缺失 tagsByEntry 映射不 crash 视为无 tag / filterTag + searchKey AND 语义（同时满足）/ 大小写不敏感（调用方已小写化 key）/ 空输入返空（R45-C，原 private 实例属性零覆盖，抽 `static func filteredEntries(_:filterTag:tagsByEntry:searchKey:)`；改坏会让筛选条点击无效或看板瞬间变空） |
+| `KindColorTests` | 6 | WorkEntryCard.kindColor 三路颜色派生：done 固定 green（9 组合 priority×status 全参数化）/ planned 用 priority.swiftUIColor 忽略 blockerStatus / blocker 用 blockerStatus.swiftUIColor 忽略 priority / planned 与 blocker 路径互斥性验证（同 priority 不同 status 颜色同 / 同 status 不同 priority 颜色同）/ 三 kind 颜色互不相同（R45-D，原 private 实例属性零覆盖，抽 `static func kindColor(kind:priority:blockerStatus:)`；改坏会让 planned 高优先级不再红色醒目或问题列颜色与状态脱钩） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1141,6 +1145,10 @@ R44-A 新建 `ValidReviewsTests` 6 用例（MeetingCard.validReviews 过滤+排�
 R44-B 新建 `SummaryStatsTests` 5 用例（TodayView.summaryStats 概要统计），SummaryStatsTests 用例数 0 → 5。原内联在 statBar ViewBuilder 里零覆盖，抽 `static func summaryStats(entries:meetings:) -> SummaryStats`（含具名 struct 让断言可读，避免依赖元组字面量顺序）后可单测。覆盖「total = done+planned+blocker（不含会议）/ rate = total > 0 ? done/total : 0」防除零契约。改坏会除零 crash 或统计条数字与列表不一致。
 R44-C 新建 `BoardItemTests` 9 用例（HistoryView.BoardItem 派生属性），BoardItemTests 用例数 0 → 9。原 `private enum BoardItem` + 两个 `private func priorityOf/statusOf` 零覆盖，BoardItem 改 internal + 两个 helper 改 `static func`。覆盖 id/sortDate（finishDate ?? timestamp fallback / 会议固定 timestamp）/ priorityOf（任务取自身 priority 三档 / 会议固定 medium）/ statusOf（任务取自身 blockerStatus 三档 / 会议固定 ongoing）全 case。改坏会让计划列分组错位（高优先级跑到底部）或状态分组混入会议（ongoing 误归类）。
 R44-D 新建 `PlannedColumnSortTests` 5 用例（HistoryView.sortPlannedColumn 复合排序），PlannedColumnSortTests 用例数 0 → 5。原内联在 columnItems 闭包 `items.sorted { ... }` 零覆盖，抽 `static func sortPlannedColumn(_:)` 后可单测。覆盖「优先级 sortOrder 升序 → sortDate 升序」复合契约（含会议默认 medium 与 medium 任务同组按时间排序）。改坏会让高优先级沉底（用户看不到最重要的待办）或逾期任务被远期任务掩盖。
+R45-A 新建 `FindDroppedEntryTests` 6 用例（HistoryView.findDroppedEntry 拖放 payload 解析），FindDroppedEntryTests 用例数 0 → 6。原 private 实例方法零覆盖，抽 `static func findDroppedEntry(from:in:)` 接收 payload + entries。覆盖三步兜底（空数组 / 非法 UUID / entry 不在列表）+ first-only 语义。改坏会让拖放静默拒绝（用户以为坏了实际数据过期）或假成功（写入空操作）。
+R45-B 新建 `WeekTitleTests` 5 用例（WeeklyReportView.weekTitle 标题格式化），WeekTitleTests 用例数 0 → 5。原 private 实例属性零覆盖，抽 `static func weekTitle(start:end:)`。覆盖中文「周报 」前缀 + isoDay 双端 + 「 ~ 」分隔符 + 跨月补零 + start==end 兜底。改坏会让标题空字符串或导出文件名缺前缀，用户找不到周报。
+R45-C 新建 `FilteredEntriesTests` 7 用例（HistoryView.filteredEntries 标签+搜索双重过滤），FilteredEntriesTests 用例数 0 → 7。原 private 实例属性零覆盖，抽 `static func filteredEntries(_:filterTag:tagsByEntry:searchKey:)`。覆盖无 filterTag 放行 / 仅搜索 / filterTag 关系过滤 / 缺失映射不 crash / AND 语义 / 大小写不敏感 / 空输入。改坏会让筛选条点击无效（contains 比对整个 TagRecord）或看板瞬间变空。`@MainActor` 标注匹配 SwiftUI View 主线程隔离。
+R45-D 新建 `KindColorTests` 6 用例（WorkEntryCard.kindColor 三路颜色派生），KindColorTests 用例数 0 → 6。原 private 实例属性零覆盖，抽 `static func kindColor(kind:priority:blockerStatus:) -> Color`。覆盖 done 固定 green（9 组合 priority×status 全参数化）/ planned 用 priority 色忽略 status / blocker 用 status 色忽略 priority / 互斥性。改坏会让 planned 高优先级不再红色醒目（用户漏看）或问题列颜色与状态脱钩。
 
 ### 14.2 测试模式约定
 

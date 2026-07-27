@@ -33,10 +33,17 @@ struct WorkEntryCard: View {
     private var entryTags: [TagRecord] { store?.tagsByEntry[entry.id] ?? [] }
 
     private var kindColor: Color {
-        switch entry.kind {
+        Self.kindColor(kind: entry.kind, priority: entry.priority, blockerStatus: entry.blockerStatus)
+    }
+
+    /// 卡片主色调的纯函数派生：done 固定 green / planned 用优先级色（让高优先级红色醒目）/ blocker 用 status 色。
+    /// R45-D：从 instance computed property 抽 static 让单测可覆盖三路派生契约。
+    /// 改坏会让 planned 高优先级任务不再红色醒目（用户漏看逾期）或问题列颜色与状态脱钩
+    static func kindColor(kind: WorkKind, priority: Priority, blockerStatus: BlockerStatus) -> Color {
+        switch kind {
         case .done:    .green
-        case .planned: entry.priority.swiftUIColor
-        case .blocker: entry.blockerStatus.swiftUIColor
+        case .planned: priority.swiftUIColor
+        case .blocker: blockerStatus.swiftUIColor
         }
     }
 
