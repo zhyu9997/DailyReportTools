@@ -18,7 +18,7 @@ enum RecordQueries {
     /// R23-L：原版 `fetchTagMap(linkTable: String, ownerColumn: String)` 接受任意字符串拼到 SQL，
     /// 当前调用方都硬编码，但签名层面是 SQL 注入风险面。改为 enum 后编译期穷举，
     /// 未来加新中间表只需扩一个 case + Migrator 建表
-    enum TagLinkTable: String {
+    enum TagLinkTable: String, CaseIterable {
         case dailyReport = "tag_daily_report"
         case todo        = "tag_todo"
         case workEntry   = "tag_work_entry"

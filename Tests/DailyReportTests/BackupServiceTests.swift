@@ -380,4 +380,87 @@ import Foundation
         #expect(remaining.contains { $0.lastPathComponent.hasPrefix("manual-") })
         #expect(remaining.contains { $0.lastPathComponent.hasPrefix("weekly-") })
     }
+
+    // MARK: - parseISO8601（R36-A：双分支零覆盖，是 weekly 去重链路的核心依赖）
+
+    @Test func parseISO8601AcceptsStandardFormat() {
+        let s = "2026-07-27T12:34:56Z"
+        let d = BackupService.parseISO8601(s)
+        #expect(d != nil)
+    }
+
+    @Test func parseISO8601AcceptsFractionalSeconds() {
+        // 容错分支：意外带毫秒的写法（writeBackup 当前不写毫秒，但解析需兼容旧/外部数据）
+        let s = "2026-07-27T12:34:56.789Z"
+        let d = BackupService.parseISO8601(s)
+        #expect(d != nil)
+    }
+
+    @Test func parseISO8601ReturnsNilForMalformed() {
+        #expect(BackupService.parseISO8601("") == nil)
+        #expect(BackupService.parseISO8601("not a date") == nil)
+        #expect(BackupService.parseISO8601("2026/07/27") == nil)   // 错误分隔符
+        #expect(BackupService.parseISO8601("2026-13-45T99:99:99Z") == nil)  // 非法月日时分
+    }
+
+    @Test func parseISO8601RoundTripsWithStandardStamp() {
+        // 与 writeBackup 内部 ISO8601DateFormatter（withInternetDateTime）输出可解析
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let now = Date()
+        let s = formatter.string(from: now)
+        let parsed = BackupService.parseISO8601(s)
+        #expect(parsed != nil)
+        // 时间精度：ISO8601 不带毫秒时秒级精度，差 < 1s
+        if let p = parsed {
+            #expect(abs(p.timeIntervalSince(now)) < 1)
+        }
+    }
+
+    // MARK: - enumerateBackups（R36-C：suffixLength 边界分支零直接覆盖）
+
+    @Test func enumerateBackupsReturnsEmptyForNonexistentDirectory() {
+        let dir = Self.makeTmpDir()
+        try? FileManager.default.removeItem(at: dir)
+        let entries = BackupService.enumerateBackups(in: dir, prefix: "weekly")
+        #expect(entries.isEmpty)
+    }
+
+    @Test func enumerateBackupsIgnoresNonMatchingPrefixAndExtension() throws {
+        let dir = Self.makeTmpDir()
+        try Self.touch("weekly-2026-07-24T01:00:00Z-2026-07-20.json", in: dir)
+        try Self.touch("boot-2026-07-24T01:00:00Z.json", in: dir)         // 不同 prefix
+        try Self.touch("weekly-2026-07-24T01:00:00Z-2026-07-20.txt", in: dir)  // 错误扩展
+        try Self.touch(".hidden.json", in: dir)                            // 隐藏文件
+        let entries = BackupService.enumerateBackups(in: dir, prefix: "weekly", suffixLength: 10)
+        #expect(entries.count == 1)
+        #expect(entries.first?.suffix == "2026-07-20")
+    }
+
+    @Test func enumerateBackupsParsesSuffixWhenBodyLongerThanSuffixLengthPlusOne() throws {
+        // body = "<ISO>-<suffix>"：ISO 是 20 字符，- 是 1 字符，suffix 10 字符，总 31 字符 > 11 → 走 suffix 分支
+        let dir = Self.makeTmpDir()
+        try Self.touch("weekly-2026-07-24T01:00:00Z-2026-07-20.json", in: dir)
+        let entries = BackupService.enumerateBackups(in: dir, prefix: "weekly", suffixLength: 10)
+        #expect(entries.count == 1)
+        let e = entries[0]
+        #expect(e.iso == "2026-07-24T01:00:00Z")
+        #expect(e.suffix == "2026-07-20")
+        #expect(e.date != nil)
+    }
+
+    @Test func enumerateBackupsTreatsAsNoSuffixWhenBodyShort() throws {
+        // body 短到无法切出 suffix（body.count <= suffixLength + 1）→ 走 else 分支
+        // 整个 body 当作 iso，suffix 为 nil
+        let dir = Self.makeTmpDir()
+        // weekly-<iso>.json：body = 20 字符 ISO，suffixLength=10，20 > 11 → 实际仍走 suffix 分支
+        // 改为 boot-<iso>.json 调用方传 suffixLength=0，触发 else 分支
+        try Self.touch("boot-2026-07-24T01:00:00Z.json", in: dir)
+        let entries = BackupService.enumerateBackups(in: dir, prefix: "boot", suffixLength: 0)
+        #expect(entries.count == 1)
+        let e = entries[0]
+        #expect(e.iso == "2026-07-24T01:00:00Z")
+        #expect(e.suffix == nil)   // suffixLength=0 时永远走 else 分支
+        #expect(e.date != nil)
+    }
 }

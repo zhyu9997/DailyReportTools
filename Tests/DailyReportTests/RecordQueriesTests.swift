@@ -93,4 +93,83 @@ import GRDB
         // realTagId 在传入的 allTagsById 找不到 → 静默跳过，owner 不进结果（或返回空数组）
         #expect(result[ownerId] == nil || result[ownerId]?.isEmpty == true)
     }
+
+    // MARK: - insertTagLinks（R36-D：INSERT 路径零直接覆盖；参数化 4 个 TagLinkTable）
+
+    /// 为每个 link 准备一张主表 + 一个 owner 行 + 一个 tag 行，返回 (queue, ownerId, tagIds)
+    /// 这是 R31-B 抽出的 helper（与 replaceTagLinks 共享 INSERT SQL），但 INSERT 路径
+    /// 只通过 AppStore 集成测试间接覆盖——一旦 SQL 字段顺序写反（如 tagId/ownerId 调换），
+    /// restore 路径会在「pre-import 已写完 → 重建阶段抛错 → 事务回滚」时让用户看到假象
+    @Test(arguments: RecordQueries.TagLinkTable.allCases)
+    func insertTagLinksWritesRowsForEachTag(link: RecordQueries.TagLinkTable) throws {
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+        let ownerId = UUID()
+        let tagIds = [UUID(), UUID(), UUID()]
+
+        // 预置最小合法 owner 行 + tag 行（满足 FK）。tag.name 走 v4 UNIQUE 约束，必须唯一
+        try queue.write { db in
+            for (idx, tid) in tagIds.enumerated() {
+                try db.execute(sql: "INSERT INTO tag (id, name, colorHex, createdAt) VALUES (?, ?, ?, ?)",
+                               arguments: [tid.uuidString, "t\(idx)", "#000000", Date()])
+            }
+            switch link {
+            case .dailyReport:
+                try db.execute(sql: "INSERT INTO daily_report (id, date, note, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)",
+                               arguments: [ownerId.uuidString, Date(), "", Date(), Date()])
+            case .todo:
+                try db.execute(sql: "INSERT INTO todo_item (id, title, notes, isDone, dueDate, createdAt, completedAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               arguments: [ownerId.uuidString, "t", "", false, nil, Date(), nil])
+            case .workEntry:
+                try db.execute(sql: """
+                    INSERT INTO work_entry (id, title, detail, timestamp, kindRaw, finishDate, helper,
+                                            blockerStatusRaw, priorityRaw, isRecurring,
+                                            recurrenceUnitRaw, recurrenceInterval,
+                                            recurrenceWeekdays, recurrenceMonthDays, createdAt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                               arguments: [ownerId.uuidString, "t", "", Date(), "done", nil, nil,
+                                           "Ongoing", "Medium", false, "Daily", 1, "[]", "[]", Date()])
+            case .meeting:
+                try db.execute(sql: """
+                    INSERT INTO meeting (id, topic, summary, timestamp, createdAt,
+                                         isRecurring, recurrenceUnitRaw, recurrenceInterval,
+                                         recurrenceWeekdays, recurrenceMonthDays)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                               arguments: [ownerId.uuidString, "t", "", Date(), Date(),
+                                           false, "Daily", 1, "[]", "[]"])
+            }
+            try RecordQueries.insertTagLinks(db, link: link, ownerId: ownerId, tagIds: tagIds)
+        }
+
+        // 读中间表，验证 3 行都写入且字段顺序正确（表名 + owner 列名都从 link 推导，
+        // 杜绝「INSERT 用了 link.rawValue 但 SELECT 用了硬编码字符串」的脱钩）
+        let ownerCol = link.ownerColumn
+        let linkRows: [(UUID, UUID)] = try queue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT tagId, \(ownerCol) FROM \(link.rawValue)")
+            return rows.map { row in
+                (UUID(uuidString: row["tagId"] as String)!, UUID(uuidString: row[ownerCol] as String)!)
+            }
+        }
+        #expect(linkRows.count == 3)
+        let insertedTagIds = Set(linkRows.map { $0.0 })
+        let insertedOwners = Set(linkRows.map { $0.1 })
+        #expect(insertedTagIds == Set(tagIds))
+        #expect(insertedOwners == [ownerId])
+    }
+
+    @Test func insertTagLinksIsIdempotentForEmptyTagIds() throws {
+        // 空 tagIds 时不应抛错（restore 阶段 owner 无 tag 是常见路径）
+        let queue = try DatabaseQueue()
+        try AppMigrator.makeMigrator().migrate(queue)
+        try queue.write { db in
+            try RecordQueries.insertTagLinks(db,
+                                              link: .workEntry,
+                                              ownerId: UUID(),
+                                              tagIds: [])
+        }
+        // 不抛错即通过
+        #expect(Bool(true))
+    }
 }

@@ -108,9 +108,8 @@ enum AppDatabase {
         let fm = FileManager.default
         guard fm.fileExists(atPath: storeURL.path) else { return nil }
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        let stamp = formatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        // R36-E：与 BackupService.writeBackup 共用 ISO8601DateFormatter.fileStamp
+        let stamp = ISO8601DateFormatter.fileStamp.string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let archiveParent = storeURL.deletingLastPathComponent()
             .appendingPathComponent("corrupted", isDirectory: true)
         // R23-G：归档目录创建失败会丢失现场；记 error 但仍继续（最坏情况只是没有归档目录）

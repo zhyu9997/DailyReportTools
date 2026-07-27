@@ -120,6 +120,20 @@ extension Calendar {
     }
 }
 
+// MARK: - ISO8601 时间戳 helper
+extension ISO8601DateFormatter {
+    /// R36-E：原版 AppDatabase.archiveCorruptedDB 与 BackupService.writeBackup 各写一份
+    /// `ISO8601DateFormatter() + formatOptions = [.withInternetDateTime] + string(from: Date())`，
+    /// 都用于生成「文件名里的时间戳」。集中后改 ISO 格式只动一处；与 parseISO8601 解析端同源。
+    /// nonisolated(unsafe)：ISO8601DateFormatter 配置后只读使用，线程安全（与本仓 Date.fmtISO 等
+    /// DateFormatter static let 同模式；Swift 6 严格并发对 Apple framework 类型此处需显式标注）
+    nonisolated(unsafe) static let fileStamp: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+}
+
 // MARK: - NSSavePanel helper
 extension NSSavePanel {
     /// 配置默认保存面板并 runModal，返回用户选中的 URL；用户取消返回 nil。

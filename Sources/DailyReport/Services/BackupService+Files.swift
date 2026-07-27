@@ -56,6 +56,10 @@ extension BackupService {
         let cal = Calendar.current
         let weekday = cal.component(.weekday, from: date)
         // weekday：Sunday=1, Saturday=7, Friday=6
+        // R36-H：Calendar.component(.weekday, ...) 必然返回 1...7，default 分支不可达。
+        // 原版 default: return 0 是静默错误源——一旦未来有人误传 .weekdayOrdinal 等其它 component，
+        // 会按 Monday=offset 0 处理却无任何信号。改为 assertionFailure 暴露（release 仍兜底 0 防崩，
+        // 与本仓「不可达分支不静默」哲学一致：参见 IntArrayJSON.decode 失败 log、AppDatabase 容错链路）
         let offset: Int = {
             switch weekday {
             case 1: return -6   // Sunday → 周一
@@ -65,7 +69,9 @@ extension BackupService {
             case 5: return -3
             case 6: return -4   // Friday → 周一
             case 7: return -5   // Saturday → 周一
-            default: return 0
+            default:
+                assertionFailure("unexpected weekday=\(weekday) from Calendar.component(.weekday)")
+                return 0
             }
         }()
         guard let monday = cal.date(byAdding: .day, value: offset, to: cal.startOfDay(for: date)) else {
@@ -272,9 +278,8 @@ extension BackupService {
             AppLogger.error("备份 encode 失败（prefix=\(prefix)）：\(error)")
             return nil
         }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        let stamp = formatter.string(from: Date())
+        // R36-E：与 AppDatabase.archiveCorruptedDB 共用 ISO8601DateFormatter.fileStamp
+        let stamp = ISO8601DateFormatter.fileStamp.string(from: Date())
         let name = suffix.map { "\(prefix)-\(stamp)-\($0).json" } ?? "\(prefix)-\(stamp).json"
         let url = backupDirectory.appendingPathComponent(name)
         do {
