@@ -30,6 +30,12 @@ enum AppTab: Int, CaseIterable, Identifiable {
 }
 
 /// 跨标签页导航：从「时间线」点会议卡片 → 切到「会议纪要」并打开编辑
+/// R24-H：与 AppStore 同样标 @MainActor。
+/// 原因：selectedTab 是 SwiftUI View selection 的真源，写 UserDefaults 也应在主线程；
+/// 此外 @Observable 类型被多个 MainActor 视图通过 @Environment 读取，
+/// 跨线程改写会让 SwiftUI observation 出现难以追踪的竞态。
+/// 标 @MainActor 后编译期保证所有访问都来自主线程
+@MainActor
 @Observable
 final class NavigationCoordinator {
     /// 当前选中的标签页（持久化到 UserDefaults，冷启动回到上次看的 tab）

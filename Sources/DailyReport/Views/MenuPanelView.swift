@@ -28,54 +28,24 @@ struct MenuPanelView: View {
     private var allMeetings: [MeetingRecord] { store?.meetings ?? [] }
 
     private var todayEntries: [WorkEntryRecord] {
-        let start = nowTick.startOfDay
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
-        return allEntries.filter { e in
-            switch e.kind {
-            case .done:
-                let ref = e.finishDate ?? e.timestamp
-                return ref >= start && ref < end
-            case .planned:
-                guard let f = e.finishDate else {
-                    return e.timestamp >= start && e.timestamp < end
-                }
-                return Calendar.current.startOfDay(for: f) <= start
-            case .blocker:
-                return e.timestamp >= start && e.timestamp < end
-            }
-        }
+        // R24-B：过滤逻辑抽到 DaySlice，与 TodayView 共用一份语义
+        let slice = DaySlice(anchor: nowTick)
+        return allEntries.filter { slice.contains(entry: $0) }
     }
 
     /// 计划列表（排除「今日计划」，避免与今日记录·计划组重复）
     private var plannedList: [WorkEntryRecord] {
-        let start = nowTick.startOfDay
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
+        let slice = DaySlice(anchor: nowTick)
         return allEntries.filter { e in
-            e.kind == .planned && !Self.isTodayPlanned(e, start: start, end: end)
+            e.kind == .planned && !slice.isTodayPlanned(e)
         }
-        .sorted { lhs, rhs in
-            if lhs.priority.sortOrder != rhs.priority.sortOrder {
-                return lhs.priority.sortOrder < rhs.priority.sortOrder
-            }
-            let l = lhs.finishDate ?? lhs.timestamp
-            let r = rhs.finishDate ?? rhs.timestamp
-            return l < r
-        }
-    }
-
-    /// 是否属于「今日计划」（与 todayEntries 的 planned 判定一致）
-    private static func isTodayPlanned(_ e: WorkEntryRecord, start: Date, end: Date) -> Bool {
-        if let f = e.finishDate {
-            return Calendar.current.startOfDay(for: f) <= start
-        }
-        return e.timestamp >= start && e.timestamp < end
+        .sorted(by: DaySlice.plannedSort)
     }
 
     /// 今日全部会议（含即将开始的周期性会议），按时间升序
     private var todayMeetings: [MeetingRecord] {
-        let start = nowTick.startOfDay
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
-        return allMeetings.filter { $0.timestamp >= start && $0.timestamp < end }
+        let slice = DaySlice(anchor: nowTick)
+        return allMeetings.filter { slice.contains(meeting: $0) }
             .sorted { $0.timestamp < $1.timestamp }
     }
 

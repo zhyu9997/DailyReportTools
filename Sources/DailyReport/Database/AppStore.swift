@@ -159,13 +159,9 @@ final class AppStore {
     }
 
     func setReportTags(_ reportId: UUID, tagIds: [UUID]) throws {
+        // R24-C：DELETE+INSERT 抽到 RecordQueries.replaceTagLinks，与 setTodo/Entry/MeetingTags 共用一份实现
         try writeOrThrow { db in
-            try db.execute(sql: "DELETE FROM tag_daily_report WHERE reportId = ?",
-                           arguments: [reportId.uuidString])
-            for tid in tagIds {
-                try db.execute(sql: "INSERT INTO tag_daily_report (tagId, reportId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, reportId.uuidString])
-            }
+            try RecordQueries.replaceTagLinks(db, link: .dailyReport, ownerId: reportId, tagIds: tagIds)
         }
     }
 
@@ -224,12 +220,7 @@ final class AppStore {
 
     func setTodoTags(_ todoId: UUID, tagIds: [UUID]) throws {
         try writeOrThrow { db in
-            try db.execute(sql: "DELETE FROM tag_todo WHERE todoId = ?",
-                           arguments: [todoId.uuidString])
-            for tid in tagIds {
-                try db.execute(sql: "INSERT INTO tag_todo (tagId, todoId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, todoId.uuidString])
-            }
+            try RecordQueries.replaceTagLinks(db, link: .todo, ownerId: todoId, tagIds: tagIds)
         }
     }
 
@@ -267,12 +258,7 @@ final class AppStore {
 
     func setEntryTags(_ entryId: UUID, tagIds: [UUID]) throws {
         try writeOrThrow { db in
-            try db.execute(sql: "DELETE FROM tag_work_entry WHERE entryId = ?",
-                           arguments: [entryId.uuidString])
-            for tid in tagIds {
-                try db.execute(sql: "INSERT INTO tag_work_entry (tagId, entryId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, entryId.uuidString])
-            }
+            try RecordQueries.replaceTagLinks(db, link: .workEntry, ownerId: entryId, tagIds: tagIds)
         }
     }
 
@@ -393,12 +379,7 @@ final class AppStore {
 
     func setMeetingTags(_ meetingId: UUID, tagIds: [UUID]) throws {
         try writeOrThrow { db in
-            try db.execute(sql: "DELETE FROM tag_meeting WHERE meetingId = ?",
-                           arguments: [meetingId.uuidString])
-            for tid in tagIds {
-                try db.execute(sql: "INSERT INTO tag_meeting (tagId, meetingId) VALUES (?, ?)",
-                               arguments: [tid.uuidString, meetingId.uuidString])
-            }
+            try RecordQueries.replaceTagLinks(db, link: .meeting, ownerId: meetingId, tagIds: tagIds)
         }
     }
 

@@ -243,7 +243,7 @@ struct TagPicker: View {
                 Spacer()
                 Button("添加", action: add)
                     .buttonStyle(.borderedProminent)
-                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(newName.isBlank)
             }
         }
         .padding(16)
@@ -253,7 +253,7 @@ struct TagPicker: View {
 
     private func add() {
         guard let store else { return }
-        let name = newName.trimmingCharacters(in: .whitespaces)
+        let name = newName.trimmed
         guard !name.isEmpty else { return }
         // 重名查重（case-insensitive）：命中则复用已存在 tag 而不是新建
         if let existing = allTags.first(where: { $0.name.lowercased() == name.lowercased() }) {

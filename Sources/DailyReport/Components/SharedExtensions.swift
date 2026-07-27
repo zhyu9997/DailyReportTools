@@ -1,6 +1,17 @@
 import SwiftUI
 import AppKit
 
+// MARK: - String + Trim
+extension String {
+    /// 全为空白（空格、Tab、换行等）则 true。
+    /// R24-E 抽出：原版散落 25 处 `trimmingCharacters(in: .whitespaces(AndNewlines)).isEmpty`，
+    /// 一半用 `.whitespaces` 一半用 `.whitespacesAndNewlines`，语义不一致。
+    /// 统一为 `.whitespacesAndNewlines`（多拒换行），用于「字段是否有效」判定更稳健
+    var isBlank: Bool { trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// 去除首尾空白与换行（与 isBlank 同源，保证「判定 + 清洗」一致）
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
 // MARK: - Color + Hex
 extension Color {
     init?(hex: String) {

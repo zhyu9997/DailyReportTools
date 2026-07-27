@@ -19,15 +19,15 @@ struct NewEntryDraft {
 
     /// 标题去掉首尾空白后是否非空（决定 + 按钮是否可点）
     var canSubmit: Bool {
-        !title.trimmingCharacters(in: .whitespaces).isEmpty
+        !title.isBlank
     }
 
     /// 生成 store.insertEntry 用的 NewWorkEntry（不变更草稿本身，调用方按需 reset）
     /// - Parameter timestamp: 入库时间戳；默认 Date()，便于测试注入
     func consume(timestamp: Date = Date()) -> NewWorkEntry {
-        let title = title.trimmingCharacters(in: .whitespaces)
+        let title = title.trimmed
         let finish: Date? = (kind == .done || kind == .planned) ? finishDate : nil
-        let helperTrimmed = helper.trimmingCharacters(in: .whitespaces)
+        let helperTrimmed = helper.trimmed
         let helperResolved: String? = (kind == .blocker && !helperTrimmed.isEmpty) ? helperTrimmed : nil
         let recurring = (kind == .planned) && isRecurring
         return NewWorkEntry(

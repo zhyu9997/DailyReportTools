@@ -6,6 +6,7 @@ import Foundation
 /// UserDefaults 是进程全局共享，测试间需要清状态 + 用唯一 key 防互扰
 /// `.serialized`：Swift Testing 默认并行执行，UserDefaults.standard 是单例，
 /// 并发写会污染其他测试的 init 读（如刚 set -1 又被另一测试 set 2 覆盖）
+@MainActor
 @Suite(.serialized) struct NavigationCoordinatorTests {
 
     private static let testKey = "test_selectedTab_navcoordinator"

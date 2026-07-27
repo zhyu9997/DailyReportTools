@@ -217,7 +217,7 @@ struct WorkEntryCard: View {
                 Spacer()
                 Button("添加", action: addNewTag)
                     .buttonStyle(.borderedProminent)
-                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(newName.isBlank)
             }
         }
         .padding(16)
@@ -225,7 +225,7 @@ struct WorkEntryCard: View {
     }
 
     private func addNewTag() {
-        let name = newName.trimmingCharacters(in: .whitespaces)
+        let name = newName.trimmed
         guard !name.isEmpty else { return }
         guard let store else { return }
         let tag: TagRecord
@@ -363,9 +363,9 @@ struct WorkEntryCard: View {
     }
 
     private func commit() {
-        let title = draftTitle.trimmingCharacters(in: .whitespaces)
+        let title = draftTitle.trimmed
         guard !title.isEmpty else { return }
-        let helperTrimmed = draftHelper.trimmingCharacters(in: .whitespaces)
+        let helperTrimmed = draftHelper.trimmed
         // 用返回值而非 writeError == nil 判断：上次写失败的 writeError 可能尚未清空，
         // 即使本次写成功，writeError != nil 也会让 editing 卡住
         let ok = write({

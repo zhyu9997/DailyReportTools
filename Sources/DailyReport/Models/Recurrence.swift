@@ -134,3 +134,27 @@ enum Recurrence {
         }
     }
 }
+
+/// 周期性项目的共享契约：WorkEntryRecord 与 MeetingRecord 都遵循。
+/// R24-D 抽出：原版两个 Record 各写一份完全相同的 `recurrenceLabel` 计算，
+/// 改 Recurrence.label 签名时必须手动同步两处。下次推算（nextRecurrenceDate /
+/// nextFutureOccurrence）锚点语义不同（planned 用 finishDate，meeting 用 timestamp），
+/// 保留在各自 struct 上，协议只覆盖真正共享的部分
+protocol RecurrenceCapable {
+    var isRecurring: Bool { get }
+    var recurrenceUnit: RecurrenceUnit { get }
+    var recurrenceInterval: Int { get }
+    var recurrenceWeekdays: [Int] { get }
+    var recurrenceMonthDays: [Int] { get }
+}
+
+extension RecurrenceCapable {
+    /// 「每天 / 每周一三五 / 每月1日、15日」展示文案；非周期返回空串
+    var recurrenceLabel: String {
+        guard isRecurring else { return "" }
+        return Recurrence.label(unit: recurrenceUnit,
+                                interval: recurrenceInterval,
+                                weekdays: recurrenceWeekdays,
+                                monthDays: recurrenceMonthDays)
+    }
+}

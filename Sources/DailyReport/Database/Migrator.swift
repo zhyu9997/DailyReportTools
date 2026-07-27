@@ -118,9 +118,9 @@ enum AppMigrator {
                 // 合并所有非空 note，按 createdAt 顺序（keep 在前）
                 let notes = rows.compactMap { (r: Row) -> String? in
                     let n: String = r["note"]
-                    return n.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : n
+                    return n.isBlank ? nil : n
                 }
-                if notes.joined() != keepNote.trimmingCharacters(in: .whitespacesAndNewlines) {
+                if notes.joined() != keepNote.trimmed {
                     let merged = notes.joined(separator: "\n\n")
                     try db.execute(sql: "UPDATE daily_report SET note = ?, updatedAt = ? WHERE id = ?",
                                    arguments: [merged, Date(), keepId])

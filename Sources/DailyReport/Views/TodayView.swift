@@ -25,41 +25,23 @@ struct TodayView: View {
     }
 
     private func todayEntries(for report: DailyReportRecord) -> [WorkEntryRecord] {
-        let start = report.date
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
-        return allEntries.filter { e in
-            switch e.kind {
-            case .done:
-                // 完成日是今天
-                let ref = e.finishDate ?? e.timestamp
-                return ref >= start && ref < end
-            case .planned:
-                // 计划完成日是今天，或已逾期仍未完成
-                guard let f = e.finishDate else {
-                    return e.timestamp >= start && e.timestamp < end
-                }
-                return Calendar.current.startOfDay(for: f) <= start
-            case .blocker:
-                // 问题按记录时间
-                return e.timestamp >= start && e.timestamp < end
-            }
-        }
+        // R24-B：过滤逻辑抽到 DaySlice，与 MenuPanelView 共用一份语义
+        let slice = DaySlice(anchor: report.date)
+        return allEntries.filter { slice.contains(entry: $0) }
     }
 
     /// 今日全部会议（含即将开始的周期性会议），按时间升序
     private func todayMeetings(for report: DailyReportRecord) -> [MeetingRecord] {
-        let start = report.date
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
-        return allMeetings.filter { $0.timestamp >= start && $0.timestamp < end }
+        let slice = DaySlice(anchor: report.date)
+        return allMeetings.filter { slice.contains(meeting: $0) }
             .sorted { $0.timestamp < $1.timestamp }
     }
 
     /// 计划列表的候选（非今日计划任务）。用 nowTick.startOfDay 锚点（与 todayEntries 的 report.date 同步刷新）
     private var plannedListBase: [WorkEntryRecord] {
-        let start = nowTick.startOfDay
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
+        let slice = DaySlice(anchor: nowTick)
         return allEntries.filter { e in
-            e.kind == .planned && !Self.isTodayPlanned(e, start: start, end: end)
+            e.kind == .planned && !slice.isTodayPlanned(e)
         }
     }
 
@@ -70,22 +52,7 @@ struct TodayView: View {
                 (store?.tagsByEntry[e.id] ?? []).contains { $0.id == sel.id }
             }
         } ?? base
-        return filtered.sorted { lhs, rhs in
-            if lhs.priority.sortOrder != rhs.priority.sortOrder {
-                return lhs.priority.sortOrder < rhs.priority.sortOrder
-            }
-            let l = lhs.finishDate ?? lhs.timestamp
-            let r = rhs.finishDate ?? rhs.timestamp
-            return l < r
-        }
-    }
-
-    /// 是否属于「今日计划」（与 todayEntries 的 planned 判定一致）
-    private static func isTodayPlanned(_ e: WorkEntryRecord, start: Date, end: Date) -> Bool {
-        if let f = e.finishDate {
-            return Calendar.current.startOfDay(for: f) <= start
-        }
-        return e.timestamp >= start && e.timestamp < end
+        return filtered.sorted(by: DaySlice.plannedSort)
     }
 
     /// alert message 文案。抽成 static helper 让 type-checker 不用穿透整个 body 推断类型

@@ -136,6 +136,79 @@ import GRDB
     // 同日去重的核心逻辑已由 BackupServiceTests.removeSameDayBoots* 覆盖，snapshotAtomic 由上面几个 case 覆盖，
     // 故 bootBackup 端到端不重复测，避免污染 runner 同级目录
 
+    // MARK: - weeklyBackupIfDue（R24-G）
+
+    /// Calendar.current weekday 映射：1=Sunday ... 7=Saturday
+    /// 2024-01-05 周五（weekday=6），2024-01-04 周四（weekday=5，非窗口）
+    private static func makeDate(_ y: Int, _ mo: Int, _ d: Int, _ h: Int = 12) -> Date {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let comps = DateComponents(year: y, month: mo, day: d, hour: h)
+        return c.date(from: comps)!
+    }
+
+    @Test func weeklyBackupIfDueSkipsOutsideWindow() throws {
+        _ = TmpBackupDir()
+        let store = try Self.makeStore()
+        // 周四（weekday=5）不在窗口
+        let thursday = Self.makeDate(2024, 1, 4)
+        let result = BackupService.weeklyBackupIfDue(in: store, now: thursday)
+        #expect(result == false)
+        // 不应写出任何 weekly- 文件
+        let files = try FileManager.default.contentsOfDirectory(at: BackupService.backupDirectory,
+                                                                 includingPropertiesForKeys: nil)
+        #expect(files.filter { $0.lastPathComponent.hasPrefix("weekly-") }.isEmpty)
+    }
+
+    @Test func weeklyBackupIfDueWritesOnFriday() throws {
+        _ = TmpBackupDir()
+        let store = try Self.makeStore()
+        _ = try store.insertTag(NewTag(name: "tag-x", colorHex: "#000000"))
+        let friday = Self.makeDate(2024, 1, 5)
+
+        let result = BackupService.weeklyBackupIfDue(in: store, now: friday)
+
+        #expect(result == true)
+        let weekKey = BackupService.weekKey(for: friday)
+        #expect(BackupService.weeklyBackupExists(in: BackupService.backupDirectory, weekKey: weekKey))
+    }
+
+    @Test func weeklyBackupIfDueIdempotentSameWeek() throws {
+        _ = TmpBackupDir()
+        let store = try Self.makeStore()
+        let friday = Self.makeDate(2024, 1, 5)
+        let sunday = Self.makeDate(2024, 1, 7)   // 同一周日
+
+        let first = BackupService.weeklyBackupIfDue(in: store, now: friday)
+        let second = BackupService.weeklyBackupIfDue(in: store, now: sunday)
+
+        #expect(first == true)
+        #expect(second == false)   // 本周已写过
+
+        // 仅一份 weekly- 文件
+        let files = try FileManager.default.contentsOfDirectory(at: BackupService.backupDirectory,
+                                                                 includingPropertiesForKeys: nil)
+        let weekly = files.filter { $0.lastPathComponent.hasPrefix("weekly-") }
+        #expect(weekly.count == 1)
+    }
+
+    @Test func weeklyBackupIfDueReturnsFalseOnWriteFailure() throws {
+        // 把 backupDirectoryOverride 指向「父目录都不存在」的路径，data.write(to:.atomic) 会失败
+        let bogusDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DailyReportUnwritable-\(UUID().uuidString)/nested", isDirectory: true)
+        // 故意不创建目录
+        BackupService.backupDirectoryOverride = bogusDir
+        defer { BackupService.backupDirectoryOverride = nil }
+
+        let store = try Self.makeStore()
+        let friday = Self.makeDate(2024, 1, 5)
+
+        let result = BackupService.weeklyBackupIfDue(in: store, now: friday)
+
+        // 写失败 → 返回 false（不抛、不崩溃；调用方按 Bool 决定后续）
+        #expect(result == false)
+    }
+
     @Test func encodeDecodeRoundTripPreservesData() async throws {
         let store = try Self.makeStore()
         let t = try store.insertTag(NewTag(name: "t", colorHex: "#000000"))

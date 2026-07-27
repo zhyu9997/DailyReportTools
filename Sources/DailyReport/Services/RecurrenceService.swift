@@ -74,7 +74,7 @@ enum RecurrenceService {
             && m.createdAt <= residualCutoff
             && recurringTopics.contains(m.topic)
             && (reviewsByMeeting[m.id] ?? []).isEmpty
-            && m.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            && m.summary.isBlank {
             try MeetingRecord.deleteOne(db, key: m.id.uuidString)
         }
     }

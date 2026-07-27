@@ -75,4 +75,23 @@ enum RecordQueries {
         }
         return result
     }
+
+    /// 替换某 owner 在中间表里的全部 tag 关系（DELETE + INSERT）。
+    /// R24-C 抽出：AppStore 的 setReportTags/setTodoTags/setEntryTags/setMeetingTags 原本各写一份
+    /// 相同的「DELETE WHERE + for-loop INSERT」模板，改 schema 时必须手动同步 4 处。
+    /// 调用方应在 writeOrThrow / transactional 事务内调用，保证 DELETE+INSERT 原子性
+    static func replaceTagLinks(_ db: Database,
+                                link: TagLinkTable,
+                                ownerId: UUID,
+                                tagIds: [UUID]) throws {
+        let ownerStr = ownerId.uuidString
+        try db.execute(sql: "DELETE FROM \(link.rawValue) WHERE \(link.ownerColumn) = ?",
+                       arguments: [ownerStr])
+        for tid in tagIds {
+            try db.execute(
+                sql: "INSERT INTO \(link.rawValue) (tagId, \(link.ownerColumn)) VALUES (?, ?)",
+                arguments: [tid.uuidString, ownerStr]
+            )
+        }
+    }
 }

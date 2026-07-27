@@ -79,21 +79,29 @@ extension BackupService {
     ///
     /// R19 顺序调整：原来「先清理后写」，写失败时本周漏备 + 旧备份链被删，可能丢失整月。
     /// 改为「先写后清」，写失败时跳过清理，旧备份链完整保留供回滚
+    ///
+    /// R24-G：抽出 `now` 参数版便于集成测试注入「周五/周日/非窗口」三种日期，
+    /// 原版用 `Date()` 内联导致窗口逻辑无测试覆盖（曾发生 weekday 取值改错静默漏备）
     @discardableResult
     static func weeklyBackupIfDue(in store: AppStore) -> Bool {
+        weeklyBackupIfDue(in: store, now: Date())
+    }
+
+    /// 参数化版：`now` 用于判定 weekday + weekKey，目录仍走 `backupDirectory`（测试可用 backupDirectoryOverride 注入临时目录）
+    @discardableResult
+    static func weeklyBackupIfDue(in store: AppStore, now: Date) -> Bool {
         let cal = Calendar.current
-        let today = Date()
         // weekday：Sunday=1, Saturday=7, Friday=6
         // 允许周末补：避免用户周五没开 app 漏掉本周备份
-        let weekday = cal.component(.weekday, from: today)
+        let weekday = cal.component(.weekday, from: now)
         guard weekday == 6 || weekday == 7 || weekday == 1 else { return false }
 
         // 「本周」键：本周一的 yyyy-MM-dd（稳定 key，跨周五~周日都指向同一周）
-        let weekKey = Self.weekKey(for: today)
+        let weekKey = Self.weekKey(for: now)
 
         if weeklyBackupExists(in: backupDirectory, weekKey: weekKey) {
             // 本周已写：清理仍可跑（写已经成功了，旧的可安全删）
-            prunePrecedingMonthWeeklyBackups(in: backupDirectory, now: today)
+            prunePrecedingMonthWeeklyBackups(in: backupDirectory, now: now)
             pruneOldWeeklyBackups(in: backupDirectory, keepCount: 12)
             return false
         }
@@ -102,7 +110,7 @@ extension BackupService {
         AppLogger.info("已完成本周备份：\(url?.lastPathComponent ?? "失败")，weekKey=\(weekKey)")
         guard url != nil else { return false }
         // 写成功后才清理：写失败时保留旧备份链供回滚
-        prunePrecedingMonthWeeklyBackups(in: backupDirectory, now: today)
+        prunePrecedingMonthWeeklyBackups(in: backupDirectory, now: now)
         pruneOldWeeklyBackups(in: backupDirectory, keepCount: 12)
         return true
     }

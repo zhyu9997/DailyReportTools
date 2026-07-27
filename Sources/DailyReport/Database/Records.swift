@@ -176,7 +176,7 @@ struct TodoItemRecord: FetchableRecord, MutablePersistableRecord, Identifiable {
     }
 }
 
-struct WorkEntryRecord: FetchableRecord, MutablePersistableRecord, Identifiable {
+struct WorkEntryRecord: FetchableRecord, MutablePersistableRecord, Identifiable, RecurrenceCapable {
     static let databaseTableName = "work_entry"
     var id: UUID
     var title: String
@@ -272,13 +272,6 @@ struct WorkEntryRecord: FetchableRecord, MutablePersistableRecord, Identifiable 
         guard kind == .planned, let f = finishDate else { return false }
         return Calendar.current.startOfDay(for: f) < Calendar.current.startOfDay(for: Date())
     }
-    var recurrenceLabel: String {
-        guard isRecurring else { return "" }
-        return Recurrence.label(unit: recurrenceUnit,
-                                interval: recurrenceInterval,
-                                weekdays: recurrenceWeekdays,
-                                monthDays: recurrenceMonthDays)
-    }
     var day: Date { Calendar.current.startOfDay(for: timestamp) }
 
     func nextRecurrenceDate() -> Date {
@@ -290,7 +283,7 @@ struct WorkEntryRecord: FetchableRecord, MutablePersistableRecord, Identifiable 
     }
 }
 
-struct MeetingRecord: FetchableRecord, MutablePersistableRecord, Identifiable {
+struct MeetingRecord: FetchableRecord, MutablePersistableRecord, Identifiable, RecurrenceCapable {
     static let databaseTableName = "meeting"
     var id: UUID
     var topic: String
@@ -347,13 +340,6 @@ struct MeetingRecord: FetchableRecord, MutablePersistableRecord, Identifiable {
     var recurrenceUnit: RecurrenceUnit {
         get { RecurrenceUnit(rawValue: recurrenceUnitRaw) ?? .daily }
         set { recurrenceUnitRaw = newValue.rawValue }
-    }
-    var recurrenceLabel: String {
-        guard isRecurring else { return "" }
-        return Recurrence.label(unit: recurrenceUnit,
-                                interval: recurrenceInterval,
-                                weekdays: recurrenceWeekdays,
-                                monthDays: recurrenceMonthDays)
     }
     var day: Date { Calendar.current.startOfDay(for: timestamp) }
 

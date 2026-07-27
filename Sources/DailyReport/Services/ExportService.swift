@@ -93,7 +93,7 @@ final class ExportService {
                     var line = "- \(e.title)"
                     if !tags.isEmpty { line += " · " + tags.map { "`\($0.name)`" }.joined(separator: " ") }
                     s += line + "\n"
-                    if !e.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    if !e.detail.isBlank {
                         s += "    \(e.detail)\n"
                     }
                 }
@@ -133,7 +133,7 @@ final class ExportService {
         for ch in ["/", ":"] {
             name = name.replacingOccurrences(of: ch, with: "-")
         }
-        return name.trimmingCharacters(in: .whitespaces)
+        return name.trimmed
     }
 
     /// 用户取消保存面板：静默返回（不抛错）；写盘失败：抛错给调用方弹 alert

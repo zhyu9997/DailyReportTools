@@ -158,8 +158,7 @@ struct MeetingCard: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(newReviewer.trimmingCharacters(in: .whitespaces).isEmpty
-                          && newOpinion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(newReviewer.isBlank && newOpinion.isBlank)
             }
         }
         .padding(10)
@@ -171,8 +170,8 @@ struct MeetingCard: View {
     }
 
     private func saveAdd() {
-        let r = newReviewer.trimmingCharacters(in: .whitespaces)
-        let o = newOpinion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let r = newReviewer.trimmed
+        let o = newOpinion.trimmed
         guard !r.isEmpty || !o.isEmpty else { cancelAdd(); return }
         let ok = write({ try $0.addReview(to: meeting.id, reviewer: r, opinion: o) })
         guard ok else { return }   // 写失败时保留草稿，让用户重试或修改
@@ -258,8 +257,7 @@ struct MeetingFormView: View {
     @State private var saveError: String?
 
     private var validReviewCount: Int {
-        reviewDrafts.filter { !$0.reviewer.trimmingCharacters(in: .whitespaces).isEmpty
-                              || !$0.opinion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
+        reviewDrafts.filter { !$0.reviewer.isBlank || !$0.opinion.isBlank }.count
     }
 
     var body: some View {
@@ -281,7 +279,7 @@ struct MeetingFormView: View {
                         .padding(.horizontal, 8)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(topic.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(topic.isBlank)
             }
             .padding(12)
         }
@@ -407,14 +405,14 @@ struct MeetingFormView: View {
     }
 
     private func save() {
-        let t = topic.trimmingCharacters(in: .whitespaces)
+        let t = topic.trimmed
         guard !t.isEmpty else { return }
 
         // 清洗评审 drafts
         let cleaned = reviewDrafts
             .map { ReviewDraft(
-                reviewer: $0.reviewer.trimmingCharacters(in: .whitespaces),
-                opinion: $0.opinion.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                reviewer: $0.reviewer.trimmed,
+                opinion: $0.opinion.trimmed) }
             .filter { !$0.reviewer.isEmpty || !$0.opinion.isEmpty }
             .enumerated()
             .map { (idx, d) in NewReview(reviewer: d.reviewer, opinion: d.opinion, order: idx) }

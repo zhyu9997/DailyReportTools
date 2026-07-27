@@ -48,7 +48,7 @@ struct HistoryView: View {
     private var allMeetings: [MeetingRecord] { store?.meetings ?? [] }
 
     private var searchKey: String {
-        searchText.trimmingCharacters(in: .whitespaces).lowercased()
+        searchText.trimmed.lowercased()
     }
 
     private func matchesSearch(_ e: WorkEntryRecord) -> Bool {
@@ -145,7 +145,7 @@ struct HistoryView: View {
             }
             // 搜索时强制展开所有折叠分组，否则结果躺在折叠组里用户看不到（分组头计数却显示）
             .onChange(of: searchText) { _, newValue in
-                if !newValue.trimmingCharacters(in: .whitespaces).isEmpty {
+                if !newValue.isBlank {
                     if !collapsedPriorities.isEmpty { collapsedPriorities.removeAll() }
                     if !collapsedBlockerPriorities.isEmpty { collapsedBlockerPriorities.removeAll() }
                 }
