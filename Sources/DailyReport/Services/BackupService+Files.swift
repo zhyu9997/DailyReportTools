@@ -140,7 +140,8 @@ extension BackupService {
             guard let date = entry.date else { continue }
             let fComps = cal.dateComponents([.year, .month, .day], from: date)
             if fComps.year == today.year && fComps.month == today.month && fComps.day == today.day {
-                try? fm.removeItem(at: entry.url)
+                do { try fm.removeItem(at: entry.url) }
+                catch { AppLogger.warn("removeSameDayBoots 删除失败（\(entry.url.path)）：\(error.localizedDescription)") }
             }
         }
     }
@@ -206,7 +207,8 @@ extension BackupService {
         guard sorted.count > keepCount else { return }
         let fm = FileManager.default
         for item in sorted.dropFirst(keepCount) {
-            try? fm.removeItem(at: item.url)
+            do { try fm.removeItem(at: item.url) }
+            catch { AppLogger.warn("pruneOldWeeklyBackups 删除失败（\(item.url.path)）：\(error.localizedDescription)") }
             AppLogger.info("清理过期 weekly（保留最近 \(keepCount) 份）：\(item.url.lastPathComponent)")
         }
     }
@@ -226,7 +228,8 @@ extension BackupService {
             guard let bYear = bComps.year, let bMonth = bComps.month else { continue }
             // backup 的年月严格早于当前年月 → 删除
             if (bYear < curYear) || (bYear == curYear && bMonth < curMonth) {
-                try? fm.removeItem(at: entry.url)
+                do { try fm.removeItem(at: entry.url) }
+                catch { AppLogger.warn("prunePrecedingMonthWeeklyBackups 删除失败（\(entry.url.path)）：\(error.localizedDescription)") }
                 AppLogger.info("清理上月周备份：\(entry.url.lastPathComponent)")
             }
         }
@@ -242,7 +245,8 @@ extension BackupService {
         guard sorted.count > keepCount else { return }
         let fm = FileManager.default
         for item in sorted.dropFirst(keepCount) {
-            try? fm.removeItem(at: item.url)
+            do { try fm.removeItem(at: item.url) }
+            catch { AppLogger.warn("pruneOldBackups 删除失败（\(item.url.path) prefix=\(prefix)）：\(error.localizedDescription)") }
         }
     }
 

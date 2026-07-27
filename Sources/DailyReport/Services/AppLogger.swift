@@ -21,11 +21,16 @@ enum AppLogger {
     private nonisolated(unsafe) static var didLogWriteFailure = false
 
     /// 日志目录：app 同级 `logs/`（thread-safe lazy init，仅创建一次）
+    /// R27-A：原版 `try? createDirectory` 静默吞错。日志目录创建失败时后续 app.log 全部写失败，
+    /// 但启动期无任何信号 —— 与 AppDatabase/BackupService+Files 同场景的 do/catch+log 不一致。
+    /// 改为 do/catch + os.Logger.fault 兜底（不用 AppLogger.warn 避免自引用：logDirectory
+    /// 是 AppLogger 静态属性的初始化器，warn 自身可能还在依赖本目录）
     private static let logDirectory: URL = {
         let fm = FileManager.default
         let appDir = Bundle.main.bundleURL.deletingLastPathComponent()
         let dir = appDir.appendingPathComponent("logs", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        do { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+        catch { faultLogger.fault("📝 AppLogger 创建日志目录失败 path=\(dir.path, privacy: .public) err=\(error.localizedDescription, privacy: .public)。后续日志仅出现在 os.Logger，app.log 会缺失。") }
         return dir
     }()
 

@@ -454,6 +454,37 @@ import GRDB
         #expect(store.meetings.count == 1)
     }
 
+    // R27-F：delete* 在 unknown id 时 deleteOne 返回 0 行影响，应静默成功不抛错；
+    // 防止后续改实现（如把 deleteOne 换成 fetchOne+delete）误把 unknown id 抛错
+
+    @Test func deleteTagUnknownIdIsSilentNoOp() async throws {
+        let store = try Self.makeStore()
+        let kept = try store.insertTag(NewTag(name: "kept", colorHex: "#000000"))
+        try store.deleteTag(UUID())
+        #expect(store.tags.count == 1)
+        #expect(store.tags.first?.id == kept.id)
+    }
+
+    @Test func deleteTodoUnknownIdIsSilentNoOp() async throws {
+        let store = try Self.makeStore()
+        let kept = try store.insertTodo(NewTodo(title: "T", notes: "", dueDate: nil, tagIds: []))
+        try store.deleteTodo(UUID())
+        #expect(store.todos.count == 1)
+        #expect(store.todos.first?.id == kept.id)
+    }
+
+    @Test func deleteMeetingUnknownIdIsSilentNoOp() async throws {
+        let store = try Self.makeStore()
+        let kept = try store.insertMeeting(NewMeeting(
+            topic: "M", summary: "", timestamp: Date(),
+            isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+            recurrenceWeekdays: [], recurrenceMonthDays: [], tagIds: [], reviews: []
+        ))
+        try store.deleteMeeting(UUID())
+        #expect(store.meetings.count == 1)
+        #expect(store.meetings.first?.id == kept.id)
+    }
+
     // MARK: - addReview FK 违规（meetingId 不存在时应抛错而非静默）
 
     @Test func addReviewToNonexistentMeetingThrows() async throws {

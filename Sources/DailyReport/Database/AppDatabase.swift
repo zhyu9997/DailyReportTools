@@ -187,13 +187,24 @@ enum AppDatabase {
     static func pruneCorruptedArchives(in rootDir: URL, keepCount: Int = 5) {
         let fm = FileManager.default
         let corruptedRoot = rootDir.appendingPathComponent("corrupted", isDirectory: true)
-        guard let dirs = try? fm.contentsOfDirectory(at: corruptedRoot,
-                                                     includingPropertiesForKeys: nil,
-                                                     options: [.skipsHiddenFiles]) else { return }
+        // R27-B：原版 try? 一并吞掉「目录不存在」与「读权限被拒」。
+        // 目录不存在是正常路径（首次启动 / 归档从未触发）静默返回；读权限失败需 warn，
+        // 否则 corrupted/ 会悄悄堆积且无信号
+        guard fm.fileExists(atPath: corruptedRoot.path) else { return }
+        let dirs: [URL]
+        do {
+            dirs = try fm.contentsOfDirectory(at: corruptedRoot,
+                                              includingPropertiesForKeys: nil,
+                                              options: [.skipsHiddenFiles])
+        } catch {
+            AppLogger.warn("读取 corrupted 归档目录失败（\(corruptedRoot.path)）：\(error.localizedDescription)")
+            return
+        }
         let sorted = dirs.sorted { $0.lastPathComponent > $1.lastPathComponent }
         guard sorted.count > keepCount else { return }
         for d in sorted.dropFirst(keepCount) {
-            try? fm.removeItem(at: d)
+            do { try fm.removeItem(at: d) }
+            catch { AppLogger.warn("删除旧 corrupted 归档失败（\(d.path)）：\(error.localizedDescription)") }
             AppLogger.info("清理旧 corrupted 归档：\(d.lastPathComponent)")
         }
     }

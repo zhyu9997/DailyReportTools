@@ -91,6 +91,16 @@ final class AppStore {
         try dbQueue.read { try block($0) }
     }
 
+    /// 4 个 setXxxTags 共用的「DELETE+INSERT 标签关系」通道（R27-E 抽出）。
+    /// 改实现（如加日志、批量优化）只动这里，4 个公开 API 自动跟随。
+    private func replaceLinks(_ link: RecordQueries.TagLinkTable,
+                              ownerId: UUID,
+                              tagIds: [UUID]) throws {
+        try writeOrThrow { db in
+            try RecordQueries.replaceTagLinks(db, link: link, ownerId: ownerId, tagIds: tagIds)
+        }
+    }
+
     // MARK: - Tag
 
     func insertTag(_ draft: NewTag) throws -> TagRecord {
@@ -159,10 +169,7 @@ final class AppStore {
     }
 
     func setReportTags(_ reportId: UUID, tagIds: [UUID]) throws {
-        // R24-C：DELETE+INSERT 抽到 RecordQueries.replaceTagLinks，与 setTodo/Entry/MeetingTags 共用一份实现
-        try writeOrThrow { db in
-            try RecordQueries.replaceTagLinks(db, link: .dailyReport, ownerId: reportId, tagIds: tagIds)
-        }
+        try replaceLinks(.dailyReport, ownerId: reportId, tagIds: tagIds)
     }
 
     // MARK: - TodoItem
@@ -217,9 +224,7 @@ final class AppStore {
     }
 
     func setTodoTags(_ todoId: UUID, tagIds: [UUID]) throws {
-        try writeOrThrow { db in
-            try RecordQueries.replaceTagLinks(db, link: .todo, ownerId: todoId, tagIds: tagIds)
-        }
+        try replaceLinks(.todo, ownerId: todoId, tagIds: tagIds)
     }
 
     // MARK: - WorkEntry
@@ -247,9 +252,7 @@ final class AppStore {
     }
 
     func setEntryTags(_ entryId: UUID, tagIds: [UUID]) throws {
-        try writeOrThrow { db in
-            try RecordQueries.replaceTagLinks(db, link: .workEntry, ownerId: entryId, tagIds: tagIds)
-        }
+        try replaceLinks(.workEntry, ownerId: entryId, tagIds: tagIds)
     }
 
     func deleteEntry(_ id: UUID) throws {
@@ -362,9 +365,7 @@ final class AppStore {
     }
 
     func setMeetingTags(_ meetingId: UUID, tagIds: [UUID]) throws {
-        try writeOrThrow { db in
-            try RecordQueries.replaceTagLinks(db, link: .meeting, ownerId: meetingId, tagIds: tagIds)
-        }
+        try replaceLinks(.meeting, ownerId: meetingId, tagIds: tagIds)
     }
 
     func deleteMeeting(_ id: UUID) throws {

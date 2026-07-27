@@ -218,8 +218,7 @@ struct HistoryView: View {
                     lineWidth: isTarget ? 2 : 1))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .dropDestination(for: String.self) { dropped, _ in
-            guard let str = dropped.first, let id = UUID(uuidString: str),
-                  let target = allEntries.first(where: { $0.id == id }) else { return false }
+            guard let target = findDroppedEntry(from: dropped) else { return false }
             // 拖到「完成」走统一完成路径（周期性计划先克隆下一次再标记完成）
             if kind == .done {
                 return writeForDrop { try _ = $0.markEntryDone(target.id) }
@@ -276,6 +275,14 @@ struct HistoryView: View {
         performWrite(in: store, error: &writeError, block)
     }
 
+    /// dropDestination 共用的「payload → entry」解析（R27-D 抽出）。
+    /// 4 处 dropDestination 闭包开头都是 `dropped.first → UUID → allEntries lookup` 三连，
+    /// payload 非法或 entry 不存在时返回 nil（调用方返回 false 表示拒绝 drop）
+    private func findDroppedEntry(from dropped: [String]) -> WorkEntryRecord? {
+        guard let str = dropped.first, let id = UUID(uuidString: str) else { return nil }
+        return allEntries.first(where: { $0.id == id })
+    }
+
     /// 计划列：按优先级分组渲染，组头可折叠，整组可作拖放目标
     @ViewBuilder
     private func plannedSections(_ items: [BoardItem]) -> some View {
@@ -302,8 +309,7 @@ struct HistoryView: View {
             },
             isDropTarget: dropTargetPriority == p,
             onDrop: { dropped in
-                guard let str = dropped.first, let id = UUID(uuidString: str),
-                      let target = allEntries.first(where: { $0.id == id }) else { return false }
+                guard let target = findDroppedEntry(from: dropped) else { return false }
                 // 拖到某优先级组：归入计划列 + 设为该优先级（跨 kind 时清对方专属字段）
                 return writeForDrop {
                     try $0.updateEntry(target.id, mutations: Self.convertKind(to: .planned) { $0.priority = p })
@@ -358,8 +364,7 @@ struct HistoryView: View {
             },
             isDropTarget: dropTargetBlockerPriority == p,
             onDrop: { dropped in
-                guard let str = dropped.first, let id = UUID(uuidString: str),
-                      let target = allEntries.first(where: { $0.id == id }) else { return false }
+                guard let target = findDroppedEntry(from: dropped) else { return false }
                 // 拖到某优先级组：归入问题列 + 设为该优先级（跨 kind 时清对方专属字段）
                 return writeForDrop {
                     try $0.updateEntry(target.id, mutations: Self.convertKind(to: .blocker) { $0.priority = p })
@@ -425,8 +430,7 @@ struct HistoryView: View {
             .stroke(isTarget ? s.swiftUIColor.opacity(0.7) : s.swiftUIColor.opacity(0.15),
                     lineWidth: isTarget ? 2 : 1))
         .dropDestination(for: String.self) { dropped, _ in
-            guard let str = dropped.first, let id = UUID(uuidString: str),
-                  let target = allEntries.first(where: { $0.id == id }) else { return false }
+            guard let target = findDroppedEntry(from: dropped) else { return false }
             // 拖到某状态子组：归入问题列 + 设优先级 + 设状态（跨 kind 时清对方专属字段）
             return writeForDrop {
                 try $0.updateEntry(target.id, mutations: Self.convertKind(to: .blocker) {

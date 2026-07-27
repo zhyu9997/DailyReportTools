@@ -50,11 +50,11 @@ rm -rf DailyReport.app db dbbackup logs
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ```
 
-> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**189 tests / 13 suites** 覆盖：
+> Swift Testing 框架随 Xcode 提供（CLT 不带），需临时指定 `DEVELOPER_DIR`。**193 tests / 13 suites** 覆盖：
 
 | Suite | 覆盖点 |
 |---|---|
-| `AppStoreTests` (32) | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + CASCADE + 关系重建 + unknown id 静默 no-op + addReview FK 违规 + markEntryDone race + transactional 回滚 + vacuum + insert 路径的 tag/review 同步绑定 |
+| `AppStoreTests` (35) | Tag/DailyReport/TodoItem/WorkEntry/Meeting/Review 的 CRUD + CASCADE + 关系重建 + unknown id 静默 no-op（update + delete 全覆盖）+ addReview FK 违规 + markEntryDone race + transactional 回滚 + vacuum + insert 路径的 tag/review 同步绑定 |
 | `MigratorTests` (9) | v1→v2 dedup 合并 + UNIQUE 约束；v3 扩展性 + 幂等性 + 索引回归；v4 tag.name dedup（保最早 createdAt + 4 张中间表关系 INSERT OR IGNORE 迁移 + dangling 残留显式清理）+ v4 clean no-op |
 | `BackupServiceTests` (33) | weekKey（含跨月/跨年边界）+ 各 prefix backup 存在性 + prune 策略 + decode 拒绝高版本/坏 JSON + decode 加固（payloadTooLarge / danglingTagReference） |
 | `BackupServiceIntegrationTests` (8) | snapshotAtomic 全实体 + restore round-trip + 空 snapshot 清库 + weeklyBackupIfDue 窗口判断（周五触发 / 同周幂等 / 窗口外跳过 / 写失败返回 false） |
@@ -107,7 +107,7 @@ Sources/DailyReport/
 ├── Views/                  # 概要 / 时间线 / 会议 / 周报 / 设置 / 菜单栏面板
 ├── Components/             # 复用组件（InlineSummaryEditor、TagPicker、KindPicker、RecurrenceEditor、WriteErrorAlert…）
 └── Services/               # 备份 / 导出 / 周期推进 / 提醒 / 日志
-Tests/DailyReportTests/      # 189 tests / 13 suites（详见 DESIGN.md §14）
+Tests/DailyReportTests/      # 193 tests / 13 suites（详见 DESIGN.md §14）
 scripts/build-app.sh         # 构建 + 打包（纯 CLT）
 Resources/Info.plist.template
 ```
