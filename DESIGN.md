@@ -339,6 +339,130 @@ DailyReport 1───* Tag *───* WorkEntry     （通过 tag_daily_report
   - 每周一三五（按中文顺序）
   - 每月1日、15日（升序）
 
+### 5.9 多对多中间表（4 张）
+
+文件：`Database/Records.swift`（4 个 struct）+ `Database/Migrator.swift`（v1_initial 建表）+ `Database/RecordQueries.swift`（操作 helper）。
+
+4 张中间表结构完全对称，仅 owner 列名 + 引用表不同：
+
+| 表名 | struct | owner 列 | owner 表 | 用途 |
+|---|---|---|---|---|
+| `tag_daily_report` | `TagDailyReport` | `reportId` | `daily_report` | 日报 ↔ 标签 |
+| `tag_todo` | `TagTodo` | `todoId` | `todo_item` | 待办 ↔ 标签 |
+| `tag_work_entry` | `TagWorkEntry` | `entryId` | `work_entry` | 任务 ↔ 标签 |
+| `tag_meeting` | `TagMeeting` | `meetingId` | `meeting` | 会议 ↔ 标签 |
+
+**统一 schema**（每张表都一样）：
+
+```sql
+CREATE TABLE tag_<owner> (
+    tagId    TEXT NOT NULL REFERENCES tag     ON DELETE CASCADE,
+    <owner>Id TEXT NOT NULL REFERENCES <owner>_table ON DELETE CASCADE,
+    PRIMARY KEY (tagId, <owner>Id)
+);
+```
+
+**设计要点**：
+
+- **复合主键 (tagId, ownerId)**：天然防止同一对关系被重复插入；UNIQUE 索引也由 PK 提供，无需额外建索引
+- **双向 `ON DELETE CASCADE`**：删 tag 自动级联删 4 张表里所有该 tag 的关系；删 owner 同理。运行时 FK 已开（`PRAGMA foreign_keys = ON`），CASCADE 由 SQLite 自动执行；**迁移期不生效**（GRDB migrator 默认 `foreignKeysEnabled=false`，防 schema 变更被 FK 拦截），任何依赖 CASCADE 的 migration 必须显式 DELETE
+- **不存额外字段**（如 createdAt）：关系是「有/无」二元事实，不需要时间戳。如果未来要支持「先打了 tag 后改了颜色」之类历史记录，应另起一张带时间戳的关系表
+- **关系不直接持有**：Record struct 里没有 `tags: [TagRecord]` 字段；`AppStore.reloadAll()` 时用 `RecordQueries.fetchTagMap` 一次性 JOIN 拉全部，按 owner 分组为 `[UUID: [TagRecord]]` 字典暴露给 View
+
+**操作 API**（`RecordQueries.swift`）：
+
+| 方法 | 用途 |
+|---|---|
+| `fetchTagMap(_ db:, link:, allTagsById:)` | 全表扫描中间表 + 字典查 tag → 按 owner 分组 |
+| `replaceTagLinks(_ db:, link:, ownerId:, tagIds:)` | DELETE WHERE owner + 循环 INSERT（4 个 `setXxxTags` 共用） |
+| `insertTagLinks(_ db:, link:, ownerId:, tagIds:)` | 仅 INSERT（restore 时 truncate 后用） |
+
+**TagLinkTable enum**（`RecordQueries.swift:21`）：把表名 + 列名编译期穷举，杜绝 SQL 注入风险面（原版接受任意字符串拼到 SQL）。新增中间表只需扩一个 case + Migrator 建表。
+
+### 5.10 GRDB helper：IntArrayJSON + RawStringDatabaseValueConvertible
+
+文件：`Database/Records.swift:1-55`。两个轻量工具，统一处理「Swift 类型 → SQLite 列」的非平凡映射。
+
+#### IntArrayJSON
+
+`Models/Recurrence.swift` 的 `recurrenceWeekdays` / `recurrenceMonthDays` 是 `[Int]`，SQLite 无原生数组类型，需序列化为 TEXT。
+
+```swift
+enum IntArrayJSON {
+    static func encode(_ arr: [Int]) -> String   // JSONEncoder → "[1,3,5]"，失败兜底 "[]"
+    static func decode(_ s: String?) -> [Int]    // 反向，失败兜底 "[]"（不抛错）
+}
+```
+
+**为什么不直接 conform `Array<Int>` 到 `DatabaseValueConvertible`**：
+
+- GRDB 协议 conformance 不从父协议自动传播（Array 的 conformance 不会让 `[Int]` 也 conformance）
+- 即使能 conform，SQLite 单列只能存一个 scalar，数组必须先序列化为字符串/字节，等同 IntArrayJSON 的做法
+- 用 JSON 文本比 GRDB 内置的 JSONCodable 更透明（备份数据库可直接看到 `[1, 3, 5]` 而非二进制 blob）
+
+**Records 的接入方式**：`WorkEntryRecord.init(row:)` 用 `recurrenceWeekdays = IntArrayJSON.decode(row["recurrenceWeekdays"])`；`encode(to:)` 用 `container["recurrenceWeekdays"] = IntArrayJSON.encode(recurrenceWeekdays)`。
+
+**容错**：encode/decode 失败都打 `AppLogger.error` + 兜底 `[]`，不抛错破坏读写流程（数据本就丢失，再让流程崩溃损失更大）。
+
+#### RawStringDatabaseValueConvertible
+
+`WorkKind / BlockerStatus / RecurrenceUnit / Priority` 都是 `String` rawValue 枚举，需要接入 GRDB 的 `DatabaseValueConvertible`。
+
+```swift
+protocol RawStringDatabaseValueConvertible: RawRepresentable, DatabaseValueConvertible
+    where RawValue == String {}
+
+extension RawStringDatabaseValueConvertible {
+    public var databaseValue: DatabaseValue { rawValue.databaseValue }
+    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> Self? {
+        guard let s = String.fromDatabaseValue(dbValue) else { return nil }
+        return Self(rawValue: s)
+    }
+}
+
+extension WorkKind: RawStringDatabaseValueConvertible {}
+extension BlockerStatus: RawStringDatabaseValueConvertible {}
+extension RecurrenceUnit: RawStringDatabaseValueConvertible {}
+extension Priority: RawStringDatabaseValueConvertible {}
+```
+
+**为什么抽出 protocol**：原版 4 个枚举各写一份完全相同的 `databaseValue { rawValue.databaseValue }` + `fromDatabaseValue { Self(rawValue:) }` 模板。改为：枚举声明 `: String` 后，一行 `extension X: RawStringDatabaseValueConvertible {}` 即接入。改一处（如未来想把 rawValue 编码改 JSON）只动 protocol extension，4 个枚举自动跟随。
+
+**注意**：Records 里实际用的是 `kindRaw: String` 字段 + computed `kind: WorkKind` 转换模式（不是直接把 `kind` 存为 enum 列）。原因：(1) 备份 JSON 直接读写字符串更友好；(2) enum raw 转换出错时（DB 里存了非法值）可以走 computed fallback（如 `?? .done`）不让整个 record 解析失败。`RawStringDatabaseValueConvertible` 主要给 BackupService DTO 直接序列化 enum 用。
+
+### 5.11 草稿类型（NewXxx）
+
+文件：`Database/Records.swift:485-580`。View 层构造新实体用的「值类型草稿」，与 Record 分离的原因：
+
+- **id / createdAt 默认值**：`UUID()` / `Date()` 在声明时初始化，调用方少写两行
+- **不含 GRDB 协议**：View 层不需要关心 FetchableRecord / MutablePersistableRecord
+- **可变字段集 ≠ Record 字段集**：草稿只接受 View 关心的输入（如 `NewWorkEntry.kind` 直接是 enum 而非 `kindRaw: String`）；`toRecord()` 内做转换 + 校验（如 `recurrenceInterval = max(1, recurrenceInterval)` 防御）
+
+| 草稿 | 用途 | 关键方法 |
+|---|---|---|
+| `NewTag` | 新建标签 | 直接传字段给 `TagRecord.init` |
+| `NewTodo` | 新建待办 | 同上 |
+| `NewWorkEntry` | 新建任务 | `toRecord()` 转 `WorkEntryRecord`（含 `max(1, interval)` 钳制） |
+| `NewMeeting` | 新建会议（含一次性传入的评审列表） | `toRecord()` 转 `MeetingRecord`，reviews 单独循环 insert |
+| `NewReview` | 新建评审 | 直接字段；order 默认 0，由 AppStore.addReview / setMeetingReviews 在事务内重排 |
+
+**命名规则**：用 `NewXxx` 前缀避免与 View 层同名 struct 冲突（如 MeetingView 内的 `ReviewDraft` 是 View 内草稿，与 `NewReview` 语义不同——`ReviewDraft` 不带 id/order，由 `cleanReviewDrafts` 转换为 `NewReview` 后才进 store）。
+
+**调用链范例**（新增任务）：
+
+```swift
+// View 层
+let draft = NewWorkEntry(
+    title: "修复登录 bug", detail: "", timestamp: Date(),
+    kind: .done, tagIds: [tagId],
+    finishDate: Date(), helper: nil,
+    isRecurring: false, recurrenceUnit: .daily, recurrenceInterval: 1,
+    recurrenceWeekdays: [], recurrenceMonthDays: [],
+    blockerStatus: .ongoing, priority: .medium
+)
+try store.insertEntry(draft)   // 内部 draft.toRecord() → rec.insert(db) → replaceTagLinks
+```
+
 ## 6. 核心业务语义
 
 ### 6.1 任务归属日（最关键，贯穿概要/周报）
@@ -712,14 +836,144 @@ R21-C 抽出。会议概要的内联编辑器，原本散落在 `TodayView.Today
 
 ## 9. 服务层
 
+### 9.0 AppStore API 总览（中心数据入口）
+
+文件：`Database/AppStore.swift`。`@Observable @MainActor final class`，持有 `dbQueue: DatabaseQueue`。
+
+#### 写入口三件套
+
+| 方法 | 用途 | 调用方 |
+|---|---|---|
+| `private writeOrThrow((Database) throws -> Void)` | 单事务 + `reloadAll` 触发 UI 刷新；失败 GRDB 自动回滚 | AppStore 所有 public mutation 内部调 |
+| `transactional<T>((Database) throws -> T) -> T` | 暴露给外部：单事务跑任意写并返回结果 | BackupService.restore / RecurrenceService.sweepAll |
+| `read<T>((Database) throws -> T) -> T` | 包一层 `dbQueue.read`，给容错链路用 | AppDatabase.snapshotToBackup |
+
+#### Tag（4 方法）
+
+| 方法 | 行为 |
+|---|---|
+| `insertTag(_ draft: NewTag) -> TagRecord` | insert + reload |
+| `getOrCreateTag(name:, colorHex:) -> TagRecord` | 内存按 case-insensitive 名查，命中复用；否则 insert。与 v4 UNIQUE 索引双保险 |
+| `updateTag(_ id:, name:, colorHex:)` | 选择性更新（nil 字段不动），fetchOne→mutate→update |
+| `deleteTag(_ id:)` | deleteOne；4 张中间表的关系由 ON DELETE CASCADE 自动清 |
+
+#### DailyReport（3 方法）
+
+| 方法 | 行为 |
+|---|---|
+| `getOrCreateReport(for date: Date) -> DailyReportRecord` | 内存命中快速路径（同日同时刻）；否则事务内 `fetchOne→insert`（与 v2 UNIQUE 双保险）。R42 提到 TOCTOU 修复范例 |
+| `updateReport(_ id:, mutations:)` | fetchOne→mutate→强制 `updatedAt = Date()`→update |
+| `setReportTags(_ reportId:, tagIds:)` | 调 `replaceLinks(.dailyReport, ...)` |
+
+#### TodoItem（5 方法）
+
+| 方法 | 行为 |
+|---|---|
+| `insertTodo(_ draft: NewTodo) -> TodoItemRecord` | insert + 一次性 replaceTagLinks（DELETE 是 no-op 等价纯 INSERT） |
+| `updateTodo(_ id:, mutations:)` | fetchOne→mutate→update |
+| `toggleTodoDone(_ id:)` | 翻转 isDone + `completedAt = isDone ? Date() : nil` |
+| `deleteTodo(_ id:)` / `deleteTodos(_ ids:)` | 单/批量删除；批量是单事务原子（任一失败回滚） |
+
+#### WorkEntry（5 方法）
+
+| 方法 | 行为 |
+|---|---|
+| `insertEntry(_ draft: NewWorkEntry) -> WorkEntryRecord` | draft.toRecord() + insert + replaceTagLinks |
+| `updateEntry(_ id:, mutations:, newTagIds:)` | fetchOne→mutate→update；可选同时替换 tag 关系 |
+| `setEntryTags(_ entryId:, tagIds:)` | 仅替换 tag 关系（不动 entry 行） |
+| `deleteEntry(_ id:)` / `deleteEntries(_ ids:)` | 单/批量删除 |
+| `markEntryDone(_ id:) -> WorkEntryRecord?` | 详见 §6.5；周期性 + planned 时克隆下一次 + 复制 tag 关系，原记录降级为 done |
+
+#### Meeting（4 方法）
+
+| 方法 | 行为 |
+|---|---|
+| `insertMeeting(_ draft: NewMeeting) -> MeetingRecord` | draft.toRecord() + insert + replaceTagLinks + 循环插 reviews（order 用数组下标） |
+| `updateMeeting(_ id:, mutations:)` | fetchOne→mutate→update |
+| `setMeetingTags(_ meetingId:, tagIds:)` | 替换 tag 关系 |
+| `deleteMeeting(_ id:)` | deleteOne；reviews 由 `ON DELETE CASCADE` 自动清 |
+
+#### Review（3 方法）
+
+| 方法 | 行为 |
+|---|---|
+| `addReview(to meetingId:, reviewer:, opinion:, order: Int?) -> ReviewRecord` | order=nil 时事务内查 `MAX(order)+1`，配合 v5 UNIQUE 双保险防多窗口并发插入同 order |
+| `setMeetingReviews(meetingId:, with drafts: [NewReview])` | 全量替换：DELETE WHERE meetingId + 循环 INSERT（order 用数组下标）。MeetingFormView.save 用 |
+| `deleteMeeting` 触发 CASCADE | review 行自动删，不需要单独 `deleteReview` |
+
+#### 维护（2 方法）
+
+| 方法 | 行为 |
+|---|---|
+| `vacuum()` | `writeWithoutTransaction { db in db.execute(sql: "VACUUM") }`。SQLite 限制 VACUUM 不能在事务里；restore 后回收空闲页 |
+| `static truncateAll(in db:)` | 给 BackupService.restore 用：在已有事务里清空全部表（先子后父：4 中间表 → review → 4 主表 → tag） |
+
+#### `replaceLinks` 私有 helper
+
+`AppStore.replaceLinks(_ link:, ownerId:, tagIds:)` 包一层 `writeOrThrow` + `RecordQueries.replaceTagLinks`，让 4 个 `setXxxTags` 公开 API 各自只剩一行调用（改实现只动这里）。
+
+### 9.0.x RecordQueries JOIN helper
+
+文件：`Database/RecordQueries.swift`。无实例 enum，4 个 static 方法 + 1 个 enum。
+
+| API | 用途 |
+|---|---|
+| `TagLinkTable` enum | 4 张中间表编译期穷举（dailyReport / todo / workEntry / meeting），表名 + owner 列名同源 |
+| `fetchTagMap(_ db:, link:, allTagsById:) -> [UUID: [TagRecord]]` | SELECT 中间表 → 字典查 tag → 按 owner 分组。reloadAll 预读 1 次 allTagsById 给 4 张表共用，避免 4 次全表 Tag 扫描 |
+| `fetchReviewsByMeeting(_ db:) -> [UUID: [ReviewRecord]]` | SELECT review ORDER BY order, createdAt → 按 meetingId 分组 |
+| `replaceTagLinks(_ db:, link:, ownerId:, tagIds:)` | DELETE WHERE owner + for-loop INSERT。`setXxxTags` 共用 |
+| `insertTagLinks(_ db:, link:, ownerId:, tagIds:)` | 仅 INSERT（restore 时 truncate 后用，没有旧关系可 DELETE） |
+
+**LinkRow 私有 struct**：`fetchTagMap` 内部用 `LinkRow { tagId: UUID; ownerId: UUID }` 解中间表行；不能直接用 `(TagRecord, UUID)` 因为 SELECT 只查 tagId/ownerId 两列，不需要 JOIN tag 主表（tag 走 `allTagsById` 字典查更高效）。
+
+### 9.0.y AppMigrator（5 个 migration 详解）
+
+文件：`Database/Migrator.swift`。无实例 enum，单入口 `makeMigrator() -> DatabaseMigrator`。
+
+#### v1_initial（一次性建 6 主表 + 4 中间表 + 1 索引）
+
+- 6 主表：`tag` / `daily_report` / `todo_item` / `work_entry` / `meeting` / `review`
+- 4 中间表：`tag_daily_report` / `tag_todo` / `tag_work_entry` / `tag_meeting`（复合主键 + 双向 CASCADE）
+- 1 索引：`on_review_meetingId`（加速 `WHERE meetingId = ?`）
+- 所有 NOT NULL 列都带 `defaults(to:)`，INSERT 时不显式赋值也能落库
+
+#### v2_unique_daily_report_date
+
+- 目标：`daily_report.date` 加 UNIQUE 约束，杜绝 `getOrCreateReport` TOCTOU 竞态产生重复行
+- **存量库去重**：按 `date` GROUP BY HAVING COUNT(*) > 1 找重复，按 `createdAt` 升序保留最早，合并 note（`isBlank` 过滤 + `\n\n` 分隔），把孤儿行的 tag 关系迁移到 keeper（`migrateTagLinks(orphanIsTag: false)`）+ 显式 DELETE 孤儿 daily_report 行
+- **不能依赖 CASCADE**：GRDB migrator 默认 `foreignKeysEnabled=false`（防 schema 变更被 FK 拦截），CASCADE 不触发；必须显式 DELETE 中间表关系 + 主表行
+- 最后 `CREATE UNIQUE INDEX uq_daily_report_date ON daily_report(date)`
+
+#### v4_unique_tag_name（无 v3）
+
+- 目标：`tag.name` 加 UNIQUE 约束，防多窗口并发建同名 tag 产生重复（与 v2 同模式）
+- **存量库去重**：按 `name` GROUP BY 找重复（binary 大小写敏感，与 `AppStore.getOrCreateTag` 一致），按 `createdAt` 升序保留最早，**4 张中间表全部过一遍 `migrateTagLinks(orphanIsTag: true)`**（orphan 是 tag 端）+ 显式 DELETE 孤儿 tag 行
+- 最后 `CREATE UNIQUE INDEX uq_tag_name ON tag(name)`
+- 无 v3：v3 是早期预留的扩展性 slot，最终没用上；v4 直接跳号保留语义清晰
+
+#### v5_unique_review_meeting_order
+
+- 目标：`review` 加 `UNIQUE(meetingId, order)` 约束，防 `addReview` 多窗口并发时两个调用者都读到 `count=N` 都插入 `order=N`
+- **存量库去重**：按 `meetingId` DISTINCT 拉所有会议 → 每个会议按 `createdAt` 升序拉所有 review id → for-loop `UPDATE review SET "order" = ? WHERE id = ?`（连续整数 0, 1, 2...）
+- 最后 `CREATE UNIQUE INDEX uq_review_meeting_order ON review(meetingId, "order")`
+- 注意 `"order"` 是 SQL 保留字，必须双引号包裹（不是反引号，SQLite 跟 SQL 标准一致）
+
+#### migrateTagLinks 私有 helper
+
+`v2` 调 1 次（orphan=report）、`v4` 调 4 次（orphan=tag，4 张中间表全过），原版 8 段 SQL 几乎逐字重复。R29-C 抽出：
+
+```swift
+private static func migrateTagLinks(_ db:, link:, orphanIsTag: Bool,
+                                     keepId: String, orphanIds: [String]) throws
+```
+
+- `orphanIsTag=true`（v4）：`INSERT OR IGNORE ... SELECT ?(keepId), entityCol FROM ... WHERE tagId = ?`
+- `orphanIsTag=false`（v2）：`INSERT OR IGNORE ... SELECT tagCol, ?(keepId) FROM ... WHERE entityCol = ?`
+- 先循环 INSERT OR IGNORE（复合主键冲突时静默跳过），再循环 DELETE orphan 残留
+
+**幂等性**：每个 migration 用 GRDB `registerMigration` 注册，name 是 idempotency key。已经跑过的 migration 不会重复跑（GRDB 在 `migration_mailbox` 表里记录）。新装 app 时 v1-v5 全部按顺序跑一遍；老库升级时只跑未跑过的。
+
 ### 9.1 RecurrenceService（`Services/RecurrenceService.swift`）
-
-`@MainActor enum RecurrenceService`（无实例），2 个静态方法：
-
-- `sweepMeetings(in store: AppStore)` — 周期会议推进 + 残留克隆清理（详见 6.4）。所有推进 + 清理合并到 `store.transactional { db in ... }` 单事务，循环内直接 `MeetingRecord.fetchOne` + `rec.update(db)` / `MeetingRecord.deleteOne`，事务结束 `reloadAll` 一次。启动若有 N 条逾期，IO 不随 N 线性放大
-- `sweepWorkEntries(in store: AppStore)` — 周期计划任务原地推进 finishDate，同上批量化到 `store.transactional` 单事务
-
-> 完成路径（`markDone`）已合并到 `AppStore.markEntryDone(_:)`，不再放在 RecurrenceService（因为需要单事务里 clone + 降级 + 复制 tag 关系，AppStore 持有 dbQueue 才能保证原子性）。
 
 ### 9.2 BackupService（R23-H 拆为 3 文件：`Services/BackupService.swift` + `+Snapshot.swift` + `+Files.swift`）
 
@@ -1190,6 +1444,101 @@ R49-D 新建 `FilterMeetingsForColumnTests` 7 用例（HistoryView.filterMeeting
 - **tmp 目录隔离文件系统测试**：`BackupServiceTests` 用 `FileManager.temporaryDirectory.appendingPathComponent("DailyReportTests-\(UUID())")` 每测一建一删
 - **raw queue 测试不标 @MainActor**：`MigratorTests` 直接 `queue.write/read` 构造 v1 fixture，无 AppStore 包装；`@MainActor` 会让 `queue.write { }` 报 "expression is async"（GRDB 闭包跨 actor）
 - **fixture 用 Date 而非 ISO8601 字符串**：GRDB `.datetime` 列内部用毫秒精度 ISO8601，与 `ISO8601DateFormatter` 字符串不等价；fixture INSERT 必须 `arguments: [day]`（Date），否则 `WHERE date = ?` 永远 miss
+
+### 14.3 Pure function 抽取登记表（R42-R49 累计）
+
+R42-R49 共 8 轮测试补强，把 View / Component / Service 里 30+ 处「不依赖 self 的纯逻辑」从 `private instance` / 内联闭包抽成 `static func`，让原本零覆盖的关键契约可单测。下表是跨章节索引，按文件分组：
+
+#### HistoryView.swift（时间线看板）
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `convertKind` | `(KindPicker, KindPicker, extra:) -> WorkKind` | R42-A | 跨 kind 拖拽字段清理（同 kind no-op / blocker 清 helper / done 清 finishDate 等） |
+| `deleteMessage` | `(String?) -> String` | R42-E | 删除二次确认 alert 文案兜底（nil → 空串） |
+| `matchesSearch` | `(title:, detail:, key:) -> Bool` | R43-A | 空放行 / title/detail 任一包含（大小写不敏感，调用方须先 lowercase key） |
+| `filteredEntries` | `(_:filterTag:tagsByEntry:searchKey:) -> [...]` | R45-C | tag + search 双重过滤 |
+| `findDroppedEntry` | `(_:in:) -> WorkEntryRecord?` | R45-A | 拖放 payload 解析（首元素 + UUID 合法性） |
+| `BoardItem.priorityOf` | `(_ item:) -> Priority` | R44-C | 任务取自身 / 会议固定 medium |
+| `BoardItem.statusOf` | `(_ item:) -> BlockerStatus` | R44-C | 任务取自身 / 会议固定 ongoing |
+| `sortPlannedColumn` | `(_ items:) -> [BoardItem]` | R44-D | 优先级 sortOrder 升序 + sortDate 升序 |
+| `sortDoneColumn` | `(_ items:) -> [BoardItem]` | R49-A | sortDate 降序（最新优先） |
+| `meetingBelongsToColumn` | `(_:kind:now:) -> Bool` | R48-D | 周期 false / 未来→planned / 过去→done / blocker 永不收 |
+| `filterMeetingsForColumn` | `(_:kind:now:filterTag:tagsByMeeting:searchKey:) -> [BoardItem]` | R49-D | 会议三重过滤合取语义 |
+
+#### WeeklyReportView.swift（周报）
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `weekRange` | `(anchor:) -> (start, end)` | R43-B | 周一锚点归一化（周日归上周一）+ 半开区间 7 天 |
+| `weekTitle` | `(start:, end:) -> String` | R45-B | `周报 yyyy-MM-dd ~ yyyy-MM-dd` |
+| `weekEntries` | `(_:in:) -> [...]` | R46-A | 半开区间过滤 + belongDate 排序 |
+| `dayData` | `(_:entries:reports:tagsByEntry:) -> DayData` | R46-B | 半开区间过滤 + isDate 匹配 report |
+| `shift` | `(anchor:, by:) -> Date` | R47-C | 周翻页（+/- delta，?? 兜底） |
+
+#### TodayView.swift（概要）
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `timeLabel` | `(minutes:) -> String` | R42-D | 0→"00:00" / 1439→"23:59" / 整点无尾分钟 |
+| `collectUsedTags` | `(entries:meetings:planned:tagsByEntry:tagsByMeeting:) -> [TagRecord]` | R43-D | 三段去重聚合（保证仅计划任务用到的 tag 也出现） |
+| `summaryStats` | `(entries:meetings:) -> SummaryStats` | R44-B | done/planned/blocker 计数 + 完成率（防除零） |
+
+#### MeetingView.swift（会议）
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `MeetingCard.validReviews` | `(from:) -> [ReviewRecord]` | R44-A | 过滤 reviewer+opinion 双空 + 按 order 升序 |
+| `MeetingFormView.validReviewCount` | `(_ drafts:) -> Int` | R46-D | 草稿有效计数（isBlank 判定纯空格行无效） |
+| `MeetingFormView.cleanReviewDrafts` | `(_ drafts:) -> [NewReview]` | R48-C | trim → filter 双空 → enumerated 重排 order |
+
+#### WorkEntryCard.swift（任务卡片）
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `kindColor` | `(kind:priority:blockerStatus:) -> Color` | R45-D | done→green / planned→priority 色 / blocker→status 色 |
+| `syncDraft` + `applyDraft` | `(from:tags:) -> EntryDraft` + `(_:to:) -> Void` | R47-D | 12 字段对称契约（含 EntryDraft struct） |
+
+#### TagPicker.swift
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `nextDefaultColor` | `(usedHexes:) -> String` | R46-C | 调色板轮选（跳过已用色 / 全用过按 count%len 轮转） |
+
+#### RecurrenceEditor.swift
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `clearedSiblingArrays` | `(unit:weekdays:monthDays:) -> (weekdays:, monthDays:)` | R49-B | 切单位清对侧数组（防脏数据写库） |
+| `toggledInt` | `(_:value:) -> [Int]` | R49-C | weekday/monthDay 数组 toggle 共用（两份重复逻辑合并） |
+
+#### ExportService.swift
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `entriesXLSXRows` | `(_:tagsByEntry:) -> [[String]]` | R47-A | 6 列行映射 + timestamp 升序 |
+| `weekMarkdown` | `(_:title:) -> String` | R48-A | 周报 Markdown 拼装（# title + 循环 markdownForDay + --- 分隔符） |
+| `todosCSVBody` | `(_:tagsByTodo:) -> String` | R48-B | CSV 文本拼装（表头 + 循环 todoCSVRow） |
+
+#### BackupService+Files.swift
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `backupFilename` | `(prefix:stamp:suffix:) -> String` | R47-B | `<prefix>-<stamp>[-suffix].json` 两/三段式（enumerateBackups 解析依赖） |
+
+#### SettingsView.swift
+
+| 抽出 | 签名 | 轮次 | 用途 |
+|---|---|---|---|
+| `timeLabel` | `(minutes:) -> String` | R42-D | 与 TodayView.timeLabel 同源（已合并到一处） |
+
+### 14.4 抽取模式约定
+
+- **签名约定**：统一 `static func`（不是 `static let` 闭包）；return 类型优先用值类型（struct / tuple / 数组），不返回 Self 引用
+- **可见性**：从 `private`/`fileprivate` 改 `internal`（不带修饰）让 `@testable import` 可见；不需要 `public`（无 framework 边界）
+- **`@MainActor` 继承**：SwiftUI View-conforming struct 默认 `@MainActor`，static method 继承隔离；测试 suite 必须 `@MainActor` 标注，否则运行时 SIGTRAP
+- **instance wrapper 保留**：`Self.xxx(...)` 让原 instance API 保持不变（避免改 View body 调用方）；只有完全没人调的死代码才直接删 instance 版本
+- **测试文件命名**：`<MethodName>Tests.swift`，`@Suite struct <MethodName>Tests`；每测独立 fixture（不复用 @State）
+- **测试覆盖目标**：每个抽出至少 4-7 个 case，含空输入 / 边界 / 顺序保留 / 兜底分支
 
 ## 15. 已知限制
 

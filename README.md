@@ -2,23 +2,87 @@
 
 一个常驻菜单栏的轻量日报工具。点击菜单栏图标即可弹出面板随手记录，需要更多空间时打开完整主窗口。
 
-> 详细设计方案见 [DESIGN.md](./DESIGN.md)。
+> 详细设计方案见 [DESIGN.md](./DESIGN.md)（每功能、每张数据表、每个服务、每个测试套件均有详解）。
+
+---
+
+## 架构总览
+
+三层架构 + 单一可信源（AppStore）：
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  View 层（SwiftUI）                                       │
+│  MenuPanelView / MainTabView / TodayView / HistoryView / │
+│  MeetingView / WeeklyReportView / SettingsView           │
+│  Components/（TagPicker / KindPicker / RecurrenceEditor  │
+│             / WorkEntryCard / InlineSummaryEditor ...）   │
+└──────────────┬───────────────────────────────────────────┘
+               │  @Environment(\.appStore)  只读快照 + 写入口
+┌──────────────▼───────────────────────────────────────────┐
+│  Service 层                                               │
+│  AppStore（@Observable @MainActor，中心数据入口）         │
+│  RecurrenceService（周期推进）/ BackupService（容灾快照）│
+│  ExportService（XLSX/Markdown）/ XLSXWriter（ZipBuilder）│
+│  ReminderService（UNUserNotification）/ AppLogger        │
+└──────────────┬───────────────────────────────────────────┘
+               │  DatabaseQueue.write { db in ... } 同步事务
+┌──────────────▼───────────────────────────────────────────┐
+│  Database 层（GRDB.swift 6.29）                           │
+│  Records（6 主表 + 4 中间表 struct）                      │
+│  Migrator（v1/v2/v4/v5）                                  │
+│  AppDatabase（三级容错：归档 / JSON salvage / fallback）  │
+│  RecordQueries（JOIN helper）                             │
+└──────────────────────────────────────────────────────────┘
+```
+
+各层职责与设计决策详见 DESIGN.md：
+
+- §2 整体架构（三 Scene 共享 AppStore / 启动流程 / 数据流）
+- §5 数据模型（10 张表逐字段详解 + 中间表 + helper + 草稿类型）
+- §6 核心业务语义（任务归属日 / 今日判定 / 周期推进 / 统一完成路径 / 跨日监听）
+- §7 视图层（每个 Tab / 面板的功能、绑定、写回策略）
+- §8 组件库（8 个复用组件）
+- §9 服务层（AppStore API 总览 / RecordQueries / Migrator / 5 个 Service）
+- §10 关键流程图解（添加任务 / 完成计划 / 跨日推进 / 导入 / 主库容错）
+- §11 数据安全策略 / §13 构建与签名 / §14 测试套件（含 574 tests 全清单）
+
+---
 
 ## 功能
 
-- **菜单栏面板** — 快速添加任务（完成 / 计划 / 问题，彩色胶囊切换）、标签、优先级、周期；下方一览今日记录 / 计划列表（每条可一键完成）/ 今日会议
-- **概要** — 顶部统计概览条（完成 / 计划 / 问题 / 会议计数 + 完成率）；今日记录按类聚合；计划列表可一键完成或删除；今日会议；标签栏覆盖「今日记录 + 会议 + 计划列表」联动筛选
-- **时间线** — 完成 / 计划 / 问题三列看板，三列各自独立滚动，拖拽改分类；计划列按优先级分组，问题列按「优先级 + 状态」双层嵌套分组；全文本搜索（标题 / 详情 / 会议主题），任务卡片可编辑 / 删除 / 打标签
-- **会议纪要** — 会议记录与评审；周期性会议逾期自动推进到下一期；**会议概要支持随时内联编辑**（概要 / 菜单栏面板对今日会议始终可写；会议纪要页对未开会议可写，已开会议只读防误改，仍可通过「编辑」表单修改）
-- **周报** — 按周翻阅，任务按**归属日**分天（完成 / 计划按 finishDate，问题按发生日）；提前完成的任务落回实际完成那天；统计卡 + 导出 XLSX（带「星期」列，按完成日排序）
-- **标签** — 任务 / 日报 / 会议共享，自定义颜色，回车即建
-- **周期性** — 会议与计划任务逾期原地推进；计划任务完成时克隆下一次（保留滚动计划）
-- **数据安全** — 启动自动 boot 快照 + 每周五触发 weekly 备份（周五没开自动在周六/周日补）；导入前自动留 pre-import 快照；JSON 全量导出 / 导入；GRDB 主库打开失败时三级容错（归档 + JSON 抢救 + 空库重建 / fallback）
-- **写失败显式反馈** — 删除 / 保存 / 拖拽分类等所有写操作失败时弹「写入失败」alert（不再静默吞 throws 让 UI 假成功），写失败保留草稿让用户重试
-- **每日提醒** — 可设时间的本地通知
-- **外观切换** — 跟随系统 / 浅色 / 深色，设置页一键切换（主窗口、菜单栏面板、设置窗统一）
-- **开机自启** — 设置页开关；基于 `SMAppService` 注册登录项，首次开启系统授权一次
+### 入口与导航
+
+- **菜单栏常驻** — 点击 ✅ checklist 图标弹出今日面板（快速记录 / 一览今日 / 今日会议）；菜单内「打开主窗口」进完整功能
+- **三 Tab 主窗口** — 概要 / 时间线 / 会议纪要 + 独立周报窗口 + 独立设置窗
 - **纯菜单栏运行** — `LSUIElement`，不占 Dock 位置
+- **外观切换** — 跟随系统 / 浅色 / 深色（主窗口 / 菜单栏面板 / 设置窗统一）
+- **开机自启** — `SMAppService` 注册登录项，首次开启系统授权一次
+
+### 数据录入与编辑
+
+- **菜单栏面板** — 快速添加任务（完成 / 计划 / 问题，彩色胶囊切换）、标签、优先级、周期；下方一览今日记录 / 计划列表（每条可一键完成）/ 今日会议
+- **概要（TodayView）** — 顶部统计概览条（完成 / 计划 / 问题 / 会议计数 + 完成率）；今日记录按类聚合；计划列表可一键完成或删除；今日会议；标签栏覆盖「今日记录 + 会议 + 计划列表」联动筛选
+- **时间线（HistoryView）** — 完成 / 计划 / 问题三列看板，三列各自独立滚动，拖拽改分类；计划列按优先级分组，问题列按「优先级 + 状态」双层嵌套分组；全文本搜索（标题 / 详情 / 会议主题），任务卡片可编辑 / 删除 / 打标签
+- **会议纪要（MeetingView）** — 会议记录 + 评审意见；周期性会议逾期自动推进到下一期；**会议概要支持随时内联编辑**（概要 / 菜单栏面板对今日会议始终可写；会议纪要页对未开会议可写，已开会议只读防误改，仍可通过「编辑」表单修改）
+- **周报（WeeklyReportView）** — 按周翻阅，任务按**归属日**分天（完成 / 计划按 finishDate，问题按发生日）；提前完成的任务落回实际完成那天；统计卡 + 导出 XLSX（带「星期」列，按完成日排序）
+
+### 标签与周期性
+
+- **标签** — 任务 / 日报 / 会议共享，自定义颜色（调色板轮选防撞色），回车即建，多对多关系（中间表 + `ON DELETE CASCADE`）
+- **周期性** — 会议与计划任务逾期原地推进（daily / weekly / monthly，含 interval 跳跃 + 月末 overflow 防御）；计划任务完成时克隆下一次（保留滚动计划）
+
+### 数据安全与容灾
+
+- **三级容错链路** — GRDB 主库打开失败时：归档到 `corrupted/<ISO>/` → sqlite3 抢救快照为 JSON → 空库重建（或 `db.fallback.sqlite`）
+- **自动备份** — 启动自动 boot 快照（同日去重，保留 10 份）+ 每周五触发 weekly 备份（周五没开自动在周六/周日补，月清理 + 硬上限 12 份）
+- **导入保护** — 导入前自动留 pre-import 快照；JSON 全量导出 / 导入
+- **写失败显式反馈** — 删除 / 保存 / 拖拽分类等所有写操作失败时弹「写入失败」alert（不再静默吞 throws 让 UI 假成功），写失败保留草稿让用户重试
+
+### 其他
+
+- **每日提醒** — 可设时间的本地通知（`UNUserNotification`），授权状态三分支决策
+- **纯 CLT 编译** — 仅需 Command Line Tools（无需完整 Xcode），`bash scripts/build-app.sh` 一行打包
 
 > 导出当前仅保留**周报 XLSX**（按星期几组织）。时间线 / 概要的历史导出入口已移除。
 
@@ -106,13 +170,15 @@ View 层不测（SwiftUI 视图组合靠人工验证）。
 
 ## 数据目录布局
 
-app 同级三个目录，整包可携带 / 备份：
+app 同级三个目录，整包可携带 / 备份。生产路径为 `~/Library/Application Support/com.zhyu.dailyreport/`，开发模式则在 `.app` 同级（`scripts/build-app.sh` 用 `-DAPP_DATA_DIR` 注入）：
 
-| 目录 | 内容 |
-|---|---|
-| `db/` | `db.sqlite`（主库）+ WAL；`db.fallback.sqlite`（兜底）；`corrupted/<ISO>/`（损坏归档，保留最近 5 个） |
-| `dbbackup/` | `boot-*.json`（启动快照，同日去重，保留 10 份）、`weekly-<ISO>-<weekKey>.json`（每周一份，月清理 + 硬上限 12 份）、`manual-*.json`、`pre-import-*.json`、`salvage-*.json` |
-| `logs/` | `app.log`（1 MB 自动滚动，保留 5 份）+ `.swiftdata_warned`（旧 SwiftData 库告警去重标志） |
+| 目录 | 内容 | 清理策略 |
+|---|---|---|
+| `db/` | `db.sqlite` + `db.sqlite-wal` / `db.sqlite-shm`（主库 + WAL）；`db.fallback.sqlite`（兜底库）；`corrupted/<ISO>/`（主库损坏时归档的 sqlite + JSON salvage） | 归档保留最近 5 个（`pruneCorruptedArchives`） |
+| `dbbackup/` | `boot-<ISO>.json`（启动快照）/ `weekly-<ISO>-w<W>.json`（每周）/ `manual-<ISO>.json`（手动）/ `pre-import-<ISO>.json`（导入前）/ `salvage-<ISO>.json`（主库抢救） | boot 同日去重 + 保留 10 份；weekly 月清理 + 硬上限 12 份 |
+| `logs/` | `app.log`（1 MB 自动滚动，保留 5 份）；`.swiftdata_migrated`（旧 SwiftData 库迁移完成标志）；`.swiftdata_warned`（旧库告警去重标志） | 自动滚动 |
+
+迁移自 SwiftData 的用户：旧 `default.store` 保留在同目录（不删），首次启动检测到 `.swiftdata_migrated` 不存在则一次性导入到 `db.sqlite`。
 
 ## 使用
 
