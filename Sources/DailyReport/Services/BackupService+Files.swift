@@ -268,6 +268,14 @@ extension BackupService {
 
     // MARK: - 写入 + ISO 解析
 
+    /// 备份文件名拼接的纯函数核心：`<prefix>-<stamp>[-suffix].json`。
+    /// suffix 为 nil（boot/manual）→ 两段；非 nil（weekly 含 weekKey）→ 三段。
+    /// R47-B：从 writeBackup 抽 static 让单测可钉死格式契约（enumerateBackups 的 hasPrefix 解析依赖此格式）。
+    /// 改坏会让 weekly 去重失效（hasPrefix 不匹配）或文件名含特殊字符让 fs 操作失败
+    static func backupFilename(prefix: String, stamp: String, suffix: String?) -> String {
+        suffix.map { "\(prefix)-\(stamp)-\($0).json" } ?? "\(prefix)-\(stamp).json"
+    }
+
     /// 把快照写到 backups/<prefix>-<ISO>[-suffix].json，并按 prefix 仅保留最近 10 个
     @discardableResult
     static func writeBackup(snapshot: Snapshot, prefix: String, suffix: String? = nil) -> URL? {
@@ -280,7 +288,7 @@ extension BackupService {
         }
         // R36-E：与 AppDatabase.archiveCorruptedDB 共用 ISO8601DateFormatter.fileStamp
         let stamp = ISO8601DateFormatter.fileStamp.string(from: Date())
-        let name = suffix.map { "\(prefix)-\(stamp)-\($0).json" } ?? "\(prefix)-\(stamp).json"
+        let name = Self.backupFilename(prefix: prefix, stamp: stamp, suffix: suffix)
         let url = backupDirectory.appendingPathComponent(name)
         do {
             try data.write(to: url, options: .atomic)

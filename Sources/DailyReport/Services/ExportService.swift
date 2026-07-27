@@ -62,14 +62,22 @@ final class ExportService {
     // MARK: XLSX
     /// 全部任务 XLSX：字段 日期/时间/标题/分类/详情/标签
     func exportEntriesXLSX(_ entries: [WorkEntryRecord], tagsByEntry: [UUID: [TagRecord]]) throws {
-        let rows = entries.sorted(by: { $0.timestamp < $1.timestamp }).map { e in
-            let tags = (tagsByEntry[e.id] ?? []).map(\.name).joined(separator: "/")
-            return [e.day.isoDay, e.timestamp.shortTime, e.title, e.kind.rawValue, e.detail, tags]
-        }
+        let rows = Self.entriesXLSXRows(entries, tagsByEntry: tagsByEntry)
         try writeXLSX(filename: "任务-\(Date().isoDay).xlsx",
                       sheetName: "全部任务",
                       header: ["日期", "时间", "标题", "分类", "详情", "标签"],
                       rows: rows)
+    }
+
+    /// 全任务 XLSX 行映射的纯函数核心：按 timestamp 升序 + 每条 entry 映射为
+    /// [day.isoDay, shortTime, title, kind.rawValue, detail, tags.joined("/")]。
+    /// R47-A：从 exportEntriesXLSX 抽 static 让单测可覆盖列顺序 + tags 拼接 + nil 兜底。
+    /// 改坏会让 XLSX 列与表头错位 / tags 显示 "nil" 字面量 / 顺序乱（按 createdAt 而非 timestamp）
+    static func entriesXLSXRows(_ entries: [WorkEntryRecord], tagsByEntry: [UUID: [TagRecord]]) -> [[String]] {
+        entries.sorted(by: { $0.timestamp < $1.timestamp }).map { e in
+            let tags = (tagsByEntry[e.id] ?? []).map(\.name).joined(separator: "/")
+            return [e.day.isoDay, e.timestamp.shortTime, e.title, e.kind.rawValue, e.detail, tags]
+        }
     }
 
     func exportTodosCSV(_ todos: [TodoItemRecord], tagsByTodo: [UUID: [TagRecord]]) throws {

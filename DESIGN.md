@@ -134,7 +134,7 @@ Sources/DailyReport/
     └── ReminderService.swift      # 单例，UNUserNotificationCenter 包装
 scripts/build-app.sh                # swift build -c release + 打包 + ad-hoc codesign + touch（纯 CLT）
 Resources/Info.plist.template       # LSUIElement=true / CFBundleIdentifier=com.zhyu.dailyreport
-Tests/DailyReportTests/             # Swift Testing 套件，499 tests / 52 suites（详见 14.测试）
+Tests/DailyReportTests/             # Swift Testing 套件，525 tests / 56 suites（详见 14.测试）
 ```
 
 ## 5. 数据模型（详细字段说明）
@@ -1023,7 +1023,7 @@ rm -rf DailyReport.app
 
 ## 14. 测试套件
 
-`Tests/DailyReportTests/` 下用 Swift Testing 框架，499 tests / 52 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
+`Tests/DailyReportTests/` 下用 Swift Testing 框架，525 tests / 56 suites 全绿。运行需 Xcode 工具链（纯 CLT 不带 Testing 模块）：
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
@@ -1083,6 +1083,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 | `DayDataTests` | 6 | WeeklyReportView.dayData 单日分组：空输入返 DayData 空内容但保留 day / 半开区间 [day, day+1day) 排除下一天 00:00 / 用 belongDate 而非 timestamp 过滤（done 跨天完成 timestamp 在前一天但 finishDate 在当天 → 纳入当天）/ isDate(_:inSameDayAs:) 匹配 report（report.date 14:30 vs day 00:00 仍命中，防精度漂移漏备注）/ 无匹配返 nil report / tagsByEntry 透传下游 UI（R46-B，原 private 实例方法零覆盖，抽 `static func dayData(_:entries:reports:tagsByEntry:)`） |
 | `NextDefaultColorTests` | 6 | TagPicker.nextDefaultColor 调色板轮选三分支：无使用返 palette[0] / 跳过已用色选下一个未用色 / 跨多个已用色（prefix(4) 后选 palette[4]）/ 非调色板色（用户自定义）不影响选择（仍选 palette[0]）/ 全用过按 count%palette.count 轮转（含 +1 后下一格）/ Set 去重（同色多次使用仍视为已用）（R46-C，原 private 实例方法零覆盖，抽 `static func nextDefaultColor(usedHexes:)`） |
 | `ValidReviewCountTests` | 4 | MeetingFormView.validReviewCount 草稿计数：空输入返 0 / 双空占位行被丢弃（reviewer+opinion 都空）/ 仅 opinion 有值保留（用户只记录意见未署名）/ isBlank（非 isEmpty）判定纯空格/制表符/换行行视为占位行（R46-D，原 private 实例属性零覆盖，抽 `static func validReviewCount(_:)`；与 MeetingCard.validReviews 必须对称，任一方改 isBlank 判定会让 UI 显示数与 DB 实际数分叉） |
+| `EntriesXLSXRowsTests` | 6 | ExportService.entriesXLSXRows 全任务 XLSX 行映射：空输入返空 / 按 timestamp 升序乱序传入验证（早→中→晚）/ 6 列顺序契约（[day.isoDay, shortTime, title, kind.rawValue, detail, tags]）/ tags 用 "/" 拼接多 tag / entry 在 tagsByEntry 缺失映射时第 6 列显空串（非 "nil" 字面量）/ kind.rawValue 中文原样输出（"完成"/"计划"/"问题" 不能改 emoji 或英文）（R47-A，原内联在 exportEntriesXLSX 绑死 NSSavePanel 零覆盖，抽 `static func entriesXLSXRows(_:tagsByEntry:)`） |
+| `BackupFilenameTests` | 6 | BackupService.backupFilename 文件名拼接：两段式 `<prefix>-<stamp>.json`（boot/manual/salvage 无 suffix）/ 三段式 `<prefix>-<stamp>-<suffix>.json`（weekly 含 weekKey）/ 必须以 .json 结尾 / 段间用「-」分隔（禁用「_」/「.」会破坏 enumerateBackups 的 dropLast 解析）/ 空字符串 suffix 边界（仍走三段式路径末尾多个「-」）（R47-B，原内联在 writeBackup 零覆盖，抽 `static func backupFilename(prefix:stamp:suffix:)`） |
+| `ShiftWeekTests` | 6 | WeeklyReportView.shift 周翻页：+1/+2 向前推 / -1 向后退 / 0 兜底不动 / 跨月（1 月底→2 月初）/ 跨年（12 月→次年 1 月）/ 0 偏移返回等价日期（R47-C，原 private 实例方法零覆盖，抽 `static func shift(anchor:by:)`；delta 符号反会让「上一周」按钮跳到下一周） |
+| `EntryDraftMappingTests` | 8 | WorkEntryCard.syncDraft/applyDraft 字段对称契约：syncDraft 全字段拷贝（12 字段映射 + recurrenceWeekdays 数组）/ nil finishDate 兜底为 ~Date()（让 planned 编辑面板有默认日期可选）/ nil helper 兜底为空串（让 TextField 显示空而非 nil）/ applyDraft done 路径写 finishDate 不写 helper / blocker 路径写 helper+blockerStatus 不写 finishDate / 纯空格 helper trim 后存 nil（防导出脏数据）/ planned 路径保留所有 recurrence 字段 / title 走 trim（R47-D，引入 `EntryDraft` struct 让两端字段集可断言，原两个 private 实例方法零覆盖；注释明确「新增字段必须同时改 syncDraft + applyDraft 两处」但无测试钉死） |
 | `NextRecurrenceTests` | 5 | WorkEntryRecord.nextRecurrenceDate 三分支（finishDate 非 nil 用 finishDate / finishDate=nil fallback Date() / weekly+空 weekdays 返回 nil fallback Date() 不抛错）+ MeetingRecord.nextFutureOccurrence 两分支（daily 推进 / weekly+空 weekdays fallback timestamp 不抛错）（R39-A/B，RecurrenceService.sweepWorkEntries/sweepMeetings 的核心依赖，原仅间接覆盖） |
 | `RecordMappingTests` | 11 | NewWorkEntry.toRecord / NewMeeting.toRecord 三分支（字段拷贝 / interval=0 钳为 1 / interval 负数钳为 1）+ 4 个派生属性 getter fallback（kind→.done / recurrenceUnit→.daily / blockerStatus→.ongoing / priority→.medium）（R39-D/E，DB 非法 rawValue 时 UI 不崩的兜底，原零覆盖）+ TagRecord.swiftUIColor 非法/空 hex fallback .accentColor + 合法 hex round-trip（R40-J，Color(hex:) ?? .accentColor 兜底分支原零覆盖） |
 
@@ -1157,6 +1161,10 @@ R46-A 新建 `WeekEntriesTests` 6 用例（WeeklyReportView.weekEntries 半开�
 R46-B 新建 `DayDataTests` 6 用例（WeeklyReportView.dayData 单日分组），DayDataTests 用例数 0 → 6。原 private 实例方法零覆盖，抽 `static func dayData(_:entries:reports:tagsByEntry:)` 接收 day + 已过滤的 entries + reports + tagsByEntry。覆盖半开区间 [day, day+1day) 排除下一天 / belongDate 而非 timestamp 过滤（跨天完成 timestamp 在前一天仍属当天）/ isDate(_:inSameDayAs:) 匹配 report（防精度漂移漏备注）/ tagsByEntry 透传。改坏会让跨天任务塞到两天或备注静默丢失。
 R46-C 新建 `NextDefaultColorTests` 6 用例（TagPicker.nextDefaultColor 调色板轮选），NextDefaultColorTests 用例数 0 → 6。原 private 实例方法零覆盖，抽 `static func nextDefaultColor(usedHexes:)` 接收已用色列表。覆盖三分支：空状态返 palette[0] / 有未用色选第一个未用 / 全用过按 count%palette.count 轮转。含 Set 去重契约（同色多次使用仍视为已用）+ 非调色板色不影响选择。改坏会让连续创建的标签颜色重复或空 palette modulo-by-zero crash。
 R46-D 新建 `ValidReviewCountTests` 4 用例（MeetingFormView.validReviewCount 草稿计数），ValidReviewCountTests 用例数 0 → 4。原 private 实例属性零覆盖，抽 `static func validReviewCount(_:)`。覆盖空输入 / 双空占位行过滤 / 仅 opinion 有效 / isBlank（非 isEmpty）判定纯空格行无效。与 MeetingCard.validReviews（R44-A）必须对称，任一方改判定会让 UI 显示数与 DB 实际数分叉。
+R47-A 新建 `EntriesXLSXRowsTests` 6 用例（ExportService.entriesXLSXRows 全任务 XLSX 行映射），EntriesXLSXRowsTests 用例数 0 → 6。原内联在 `exportEntriesXLSX` 绑死 NSSavePanel 零覆盖，抽 `static func entriesXLSXRows(_:tagsByEntry:) -> [[String]]`。覆盖按 timestamp 升序 + 6 列顺序契约（[day.isoDay, shortTime, title, kind.rawValue, detail, tags]）+ tags 用 "/" 拼接（不能用 "," 与 csvEscape 冲突）+ 缺失映射显空串（非 "nil" 字面量）。改坏会让导出的 XLSX 列与表头错位。
+R47-B 新建 `BackupFilenameTests` 6 用例（BackupService.backupFilename 文件名拼接），BackupFilenameTests 用例数 0 → 6。原内联在 `writeBackup` 零覆盖，抽 `static func backupFilename(prefix:stamp:suffix:) -> String`。覆盖两段式（boot/manual 无 suffix）/ 三段式（weekly 含 weekKey suffix）/ .json 后缀 / 「-」分隔符契约（enumerateBackups 的 hasPrefix + dropLast 解析依赖）。`@MainActor` 标注匹配 BackupService 主线程隔离。改坏会让 weekly 去重失效（hasPrefix 不匹配导致磁盘堆积）或文件名含特殊字符让 fs 操作失败。
+R47-C 新建 `ShiftWeekTests` 6 用例（WeeklyReportView.shift 周翻页），ShiftWeekTests 用例数 0 → 6。原 private 实例方法零覆盖，抽 `static func shift(anchor:by:) -> Date`（含 `?? anchor` 兜底）。覆盖方向（+/- delta）+ 跨月跨年边界 + 0 兜底不动。改坏会让「上一周」按钮跳到下一周（delta 符号反）或极端日历 crash（去掉 ?? 强解包）。
+R47-D 新建 `EntryDraftMappingTests` 8 用例（WorkEntryCard.syncDraft/applyDraft 字段对称契约），EntryDraftMappingTests 用例数 0 → 8。引入 `EntryDraft` struct（12 字段）让两端字段集可断言。抽 `static func syncDraft(from:tags:) -> EntryDraft` + `static func applyDraft(_:to:)`。覆盖 syncDraft 全字段拷贝 + nil 兜底（finishDate→Date() / helper→空串）/ applyDraft kind 三分支分流（done 写 finishDate / blocker 写 helper+status / planned 写 recurrence）/ 纯空格 helper trim 后存 nil（防导出脏数据）/ title 走 trim。改坏会产生「周期性 blocker」怪胎（清 recurrence 漏）或 helper 存成空字符串而非 nil。
 
 ### 14.2 测试模式约定
 

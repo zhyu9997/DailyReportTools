@@ -203,6 +203,13 @@ struct WeeklyReportView: View {
     }
 
     private func shiftWeek(_ delta: Int) {
-        weekAnchor = Calendar.current.date(byAdding: .weekOfYear, value: delta, to: weekAnchor) ?? weekAnchor
+        weekAnchor = Self.shift(anchor: weekAnchor, by: delta)
+    }
+
+    /// 周翻页的纯函数核心：按 weekOfYear 偏移 anchor，nil 兜底返回原 anchor。
+    /// R47-C：从 instance 抽 static 让单测可覆盖方向 + nil 兜底契约。
+    /// 改坏会让「上一周」按钮跳到下一周（delta 符号反）或极端日历 crash（去掉 ?? 强解包）
+    static func shift(anchor: Date, by delta: Int) -> Date {
+        Calendar.current.date(byAdding: .weekOfYear, value: delta, to: anchor) ?? anchor
     }
 }

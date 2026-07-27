@@ -1,5 +1,22 @@
 import SwiftUI
 
+/// 任务卡片的编辑草稿快照。R47-D：syncDraft 产出 / applyDraft 消费的统一载体，
+/// 让两端的字段集对称契约可被测试钉死（防未来加字段漏改）
+struct EntryDraft {
+    var title: String
+    var detail: String
+    var tags: [TagRecord]
+    var finishDate: Date
+    var helper: String
+    var isRecurring: Bool
+    var recurrenceUnit: RecurrenceUnit
+    var recurrenceInterval: Int
+    var recurrenceWeekdays: [Int]
+    var recurrenceMonthDays: [Int]
+    var blockerStatus: BlockerStatus
+    var priority: Priority
+}
+
 /// 时间线里的任务卡片：可编辑、可删除、可拖拽到状态列改分类
 /// R23-I：从 WorkSummaryView.swift 拆出（原文件 494 行，WorkEntryCard 占 410 行；
 /// WorkSummaryView 是只读汇总视图，二者关注点不同——编辑/CRUD vs 渲染——合并让 WorkSummaryView
@@ -355,44 +372,82 @@ struct WorkEntryCard: View {
     }
 
     private func syncDraft() {
-        draftTitle = entry.title
-        draftDetail = entry.detail
-        draftTags = entryTags
-        draftFinishDate = entry.finishDate ?? Date()
-        draftHelper = entry.helper ?? ""
-        draftIsRecurring = entry.isRecurring
-        draftRecurrenceUnit = entry.recurrenceUnit
-        draftRecurrenceInterval = entry.recurrenceInterval
-        draftRecurrenceWeekdays = entry.recurrenceWeekdays
-        draftRecurrenceMonthDays = entry.recurrenceMonthDays
-        draftBlockerStatus = entry.blockerStatus
-        draftPriority = entry.priority
+        let d = Self.syncDraft(from: entry, tags: entryTags)
+        draftTitle = d.title
+        draftDetail = d.detail
+        draftTags = d.tags
+        draftFinishDate = d.finishDate
+        draftHelper = d.helper
+        draftIsRecurring = d.isRecurring
+        draftRecurrenceUnit = d.recurrenceUnit
+        draftRecurrenceInterval = d.recurrenceInterval
+        draftRecurrenceWeekdays = d.recurrenceWeekdays
+        draftRecurrenceMonthDays = d.recurrenceMonthDays
+        draftBlockerStatus = d.blockerStatus
+        draftPriority = d.priority
+    }
+
+    /// 草稿同步的纯函数核心：record + tags → EntryDraft。R47-D：从 instance 抽 static 让单测可覆盖
+    /// 12 字段映射 + finishDate=nil 兜底为 Date() + helper=nil 兜底为空串的语义。
+    /// 与 applyDraft 字段集必须 1:1 对称（防未来加字段漏改 syncDraft 让编辑看不到已有值）
+    static func syncDraft(from entry: WorkEntryRecord, tags: [TagRecord]) -> EntryDraft {
+        EntryDraft(
+            title: entry.title,
+            detail: entry.detail,
+            tags: tags,
+            finishDate: entry.finishDate ?? Date(),
+            helper: entry.helper ?? "",
+            isRecurring: entry.isRecurring,
+            recurrenceUnit: entry.recurrenceUnit,
+            recurrenceInterval: entry.recurrenceInterval,
+            recurrenceWeekdays: entry.recurrenceWeekdays,
+            recurrenceMonthDays: entry.recurrenceMonthDays,
+            blockerStatus: entry.blockerStatus,
+            priority: entry.priority
+        )
     }
 
     /// @State 草稿 → record 写回。R33-F 抽出：commit 原本内联 18 行 mutations 与 syncDraft 字段集
     /// 完全对称，新增字段（如「地点」）必须同时改两处。抽 helper 后只动 syncDraft + applyDraft 两端，
     /// 不再扫整个 commit 寻找遗漏点
     private func applyDraft(to rec: inout WorkEntryRecord) {
-        rec.title = draftTitle.trimmed
-        rec.detail = draftDetail
-        let helperTrimmed = draftHelper.trimmed
+        let d = EntryDraft(
+            title: draftTitle, detail: draftDetail, tags: draftTags,
+            finishDate: draftFinishDate, helper: draftHelper,
+            isRecurring: draftIsRecurring, recurrenceUnit: draftRecurrenceUnit,
+            recurrenceInterval: draftRecurrenceInterval,
+            recurrenceWeekdays: draftRecurrenceWeekdays,
+            recurrenceMonthDays: draftRecurrenceMonthDays,
+            blockerStatus: draftBlockerStatus, priority: draftPriority
+        )
+        Self.applyDraft(d, to: &rec)
+    }
+
+    /// 草稿写回 record 的纯函数核心：12 字段映射 + kind 分流（done/planned 写 finishDate；
+    /// blocker 写 helper+blockerStatus；planned 专属 recurrence 字段，非 planned 强制 isRecurring=false）。
+    /// R47-D：从 instance 抽 static 让单测可覆盖 kind 分流 + nil 转换 + recurrence 清理分支。
+    /// 改坏会产生「周期性 blocker」怪胎（清 recurrence 漏）或 helper 存成空字符串而非 nil（导出脏数据）
+    static func applyDraft(_ draft: EntryDraft, to rec: inout WorkEntryRecord) {
+        rec.title = draft.title.trimmed
+        rec.detail = draft.detail
+        let helperTrimmed = draft.helper.trimmed
         switch rec.kind {
         case .done, .planned:
-            rec.finishDate = draftFinishDate
+            rec.finishDate = draft.finishDate
         case .blocker:
             rec.helper = helperTrimmed.isEmpty ? nil : helperTrimmed
-            rec.blockerStatus = draftBlockerStatus
+            rec.blockerStatus = draft.blockerStatus
         }
         if rec.kind == .planned {
-            rec.isRecurring = draftIsRecurring
-            rec.recurrenceUnit = draftRecurrenceUnit
-            rec.recurrenceInterval = draftRecurrenceInterval
-            rec.recurrenceWeekdays = draftRecurrenceWeekdays
-            rec.recurrenceMonthDays = draftRecurrenceMonthDays
+            rec.isRecurring = draft.isRecurring
+            rec.recurrenceUnit = draft.recurrenceUnit
+            rec.recurrenceInterval = draft.recurrenceInterval
+            rec.recurrenceWeekdays = draft.recurrenceWeekdays
+            rec.recurrenceMonthDays = draft.recurrenceMonthDays
         } else {
             rec.isRecurring = false
         }
-        rec.priority = draftPriority
+        rec.priority = draft.priority
     }
 
     private func commit() {
